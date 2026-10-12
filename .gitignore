@@ -6,6 +6,19 @@ node_modules/
 .env
 .env.local
 .env.*.local
+backend/.env
+
+# Credentials and TLS material
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Research participant data and local exports (never commit)
+backend/uploads/
+extracted_writings_by_user/
+extracted_writings_fixed/
+pilot_participant_introductions/
 
 # Build outputs
 dist/

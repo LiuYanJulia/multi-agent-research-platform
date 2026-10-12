@@ -4,8 +4,16 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { isPracticeSession } from '../utils/sessionUtils';
+import { finalizeSessionTimeline } from '../services/manipulationPipeline';
+import { exportEvaluationAudit } from '../services/evaluationAuditExport';
 
 const router = express.Router();
+
+const TREATMENT_GROUP_IDS = new Set(['2', '3', '4', '5', 'hightf_hightm', 'hightf_lowtm', 'lowtf_hightm', 'lowtf_lowtm']);
+
+function isTreatmentGroup(groupId: unknown): boolean {
+  return TREATMENT_GROUP_IDS.has(String(groupId ?? '').trim().toLowerCase());
+}
 
 // Configure multer for audio file uploads
 const storage = multer.diskStorage({
@@ -117,7 +125,7 @@ router.post('/submit', async (req, res) => {
         if ((existingSessions as any[]).length === 0) {
           console.log(`Session ${sessionId} not found in database, creating it...`);
           await db.execute(
-            'INSERT INTO sessions (id, user_id, status) VALUES (?, ?, ?)',
+            'INSERT INTO sessions (id, participant_id, status) VALUES (?, ?, ?)',
             [sessionId, 'auto-created', 'active']
           );
           console.log(`Session ${sessionId} created in database`);
@@ -276,6 +284,32 @@ router.post('/submit', async (req, res) => {
       });
     }
 
+    // Finish any remaining timeline partition before exporting the audit, so a final
+    // assistant response is represented in both evaluation_agent_audit and its files.
+    try {
+      await finalizeSessionTimeline(db as unknown as mysql.Pool, sessionId);
+    } catch (timelineError) {
+      console.error('Final event-timeline evaluation failed:', timelineError);
+    }
+
+    // Groups 2–5 receive a standalone audit export. The JSON and Markdown are generated
+    // directly from evaluation_agent_audit rather than reconstructed from generic logs.
+    let evaluationAuditJsonFileUrl: string | null = null;
+    let evaluationAuditMarkdownFileUrl: string | null = null;
+    try {
+      const [sessionRows] = await db.execute('SELECT group_id FROM sessions WHERE id = ?', [sessionId]);
+      const groupId = (sessionRows as any[])[0]?.group_id;
+      if (isTreatmentGroup(groupId)) {
+        const auditExport = await exportEvaluationAudit(db as unknown as mysql.Pool, sessionId);
+        evaluationAuditJsonFileUrl = auditExport.jsonFileUrl;
+        evaluationAuditMarkdownFileUrl = auditExport.markdownFileUrl;
+        console.log(`Evaluation audit exported (${auditExport.count} runs): ${evaluationAuditJsonFileUrl}`);
+      }
+    } catch (auditError) {
+      // Preserve the completed submission even if an audit file cannot be written.
+      console.error('Error exporting evaluation audit:', auditError);
+    }
+
     // Check if submission already exists for this session
     const [existingSubmissions] = await db.execute(
       'SELECT id FROM submissions WHERE session_id = ?',
@@ -286,9 +320,9 @@ router.post('/submit', async (req, res) => {
       // Update existing submission
       await db.execute(
         `UPDATE submissions
-         SET final_writing = ?, transcript_file_url = ?, chat_history_file_url = ?, interaction_logs_file_url = ?, audio_file_url = ?, word_count = ?, char_count = ?, session_start_timestamp = ?, recording_start_timestamp = ?, submitted_at = ?
+         SET final_writing = ?, transcript_file_url = ?, chat_history_file_url = ?, interaction_logs_file_url = ?, evaluation_audit_json_file_url = ?, evaluation_audit_markdown_file_url = ?, audio_file_url = ?, word_count = ?, char_count = ?, session_start_timestamp = ?, recording_start_timestamp = ?, submitted_at = ?
          WHERE session_id = ?`,
-        [finalWriting, transcriptFileUrl, chatHistoryFileUrl, interactionLogsFileUrl, audioFileUrl, wordCount, charCount, sessionStartTimestamp, recordingStartTimestamp, mysqlTimestamp, sessionId]
+        [finalWriting, transcriptFileUrl, chatHistoryFileUrl, interactionLogsFileUrl, evaluationAuditJsonFileUrl, evaluationAuditMarkdownFileUrl, audioFileUrl, wordCount, charCount, sessionStartTimestamp, recordingStartTimestamp, mysqlTimestamp, sessionId]
       );
     } else {
       // Generate unique ID for submission
@@ -296,9 +330,9 @@ router.post('/submit', async (req, res) => {
 
       // Insert new submission
       await db.execute(
-        `INSERT INTO submissions (id, session_id, final_writing, transcript_file_url, chat_history_file_url, interaction_logs_file_url, audio_file_url, word_count, char_count, session_start_timestamp, recording_start_timestamp, submitted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [submissionId, sessionId, finalWriting, transcriptFileUrl, chatHistoryFileUrl, interactionLogsFileUrl, audioFileUrl, wordCount, charCount, sessionStartTimestamp, recordingStartTimestamp, mysqlTimestamp]
+        `INSERT INTO submissions (id, session_id, final_writing, transcript_file_url, chat_history_file_url, interaction_logs_file_url, evaluation_audit_json_file_url, evaluation_audit_markdown_file_url, audio_file_url, word_count, char_count, session_start_timestamp, recording_start_timestamp, submitted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [submissionId, sessionId, finalWriting, transcriptFileUrl, chatHistoryFileUrl, interactionLogsFileUrl, evaluationAuditJsonFileUrl, evaluationAuditMarkdownFileUrl, audioFileUrl, wordCount, charCount, sessionStartTimestamp, recordingStartTimestamp, mysqlTimestamp]
       );
     }
 
@@ -320,7 +354,9 @@ router.post('/submit', async (req, res) => {
         submittedAt,
         transcriptFileUrl,
         chatHistoryFileUrl,
-        interactionLogsFileUrl
+        interactionLogsFileUrl,
+        evaluationAuditJsonFileUrl,
+        evaluationAuditMarkdownFileUrl,
       }
     });
   } catch (error) {

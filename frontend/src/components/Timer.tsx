@@ -6,6 +6,7 @@ interface TimerProps {
   visible?: boolean; // Whether to display the timer visually
   onExpire?: () => void; // Callback when countdown reaches 0
   onTick?: (elapsedSeconds: number) => void; // Callback on each second (for countup mode)
+  paused?: boolean; // Temporarily freeze the timer without resetting its displayed value
 }
 
 const Timer: React.FC<TimerProps> = ({
@@ -13,14 +14,20 @@ const Timer: React.FC<TimerProps> = ({
   initialSeconds = 120,
   visible = true,
   onExpire,
-  onTick
+  onTick,
+  paused = false
 }) => {
-  const [seconds, setSeconds] = useState(mode === 'countdown' ? initialSeconds : 0);
+  // Resume-on-refresh (2026-09): both modes now honor initialSeconds as their starting value -
+  // callers computing real elapsed-time-since-session-start (for countup) or remaining time (for
+  // countdown) can pass it in, so a page refresh mid-task doesn't silently reset the clock to 0.
+  const [seconds, setSeconds] = useState(initialSeconds);
   const [expired, setExpired] = useState(false);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Handle timer tick - just update the state, no callbacks here
   useEffect(() => {
+    if (paused) return;
+
     intervalRef.current = setInterval(() => {
       setSeconds(prev => {
         if (mode === 'countdown') {
@@ -44,7 +51,7 @@ const Timer: React.FC<TimerProps> = ({
         clearInterval(intervalRef.current);
       }
     };
-  }, [mode]);
+  }, [mode, paused]);
 
   // Handle onExpire callback separately (outside of render)
   useEffect(() => {

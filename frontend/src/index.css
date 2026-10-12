@@ -240,6 +240,19 @@ code {
   }
 }
 
+/* A new AI-guidance notification replaces the previous one and flashes twice,
+   making the current Insert action unambiguous without leaving stale banners. */
+@keyframes guidance-notification-flash {
+  0%, 100% {
+    background-color: #ecfdf5;
+    border-color: #6ee7b7;
+  }
+  50% {
+    background-color: #bbf7d0;
+    border-color: #059669;
+  }
+}
+
 /* Responsive breakpoints */
 @media (max-width: 768px) {
   .main-grid {

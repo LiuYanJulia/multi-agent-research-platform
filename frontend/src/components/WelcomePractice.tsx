@@ -2,9 +2,13 @@ import React from 'react';
 
 interface WelcomePracticeProps {
   onStart: () => void;
+  groupId: string;
 }
 
-const WelcomePractice: React.FC<WelcomePracticeProps> = ({ onStart }) => {
+const WelcomePractice: React.FC<WelcomePracticeProps> = ({ onStart, groupId }) => {
+  const hasSecondAi = ['2', '3', '4', '5'].includes(groupId.trim());
+  const hasTwoPhases = ['4', '5', 'lowtf_hightm', 'lowtf_lowtm'].includes(groupId.trim().toLowerCase());
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -41,7 +45,7 @@ const WelcomePractice: React.FC<WelcomePracticeProps> = ({ onStart }) => {
           marginBottom: '2rem'
         }} className="text-token-text-secondary">
           <p style={{ marginBottom: '1rem' }}>
-            Before starting the main experiment, you will complete a short <strong>2-minute practice task</strong> to help you become familiar with the platform and the process of verbalizing your thoughts.
+            Before starting the main experiment, you will complete a short <strong>{hasTwoPhases ? '3-minute' : '2-minute'} practice task</strong> to help you become familiar with the platform and the process of verbalizing your thoughts.
           </p>
 
           <div style={{
@@ -77,7 +81,7 @@ const WelcomePractice: React.FC<WelcomePracticeProps> = ({ onStart }) => {
               fontStyle: 'italic',
               color: '#6b7280'
             }}>
-              Duration: 2 minutes
+              Duration: {hasTwoPhases ? '3 minutes (two 1 minute 30 second phases)' : '2 minutes'}
             </p>
           </div>
 
@@ -103,9 +107,42 @@ const WelcomePractice: React.FC<WelcomePracticeProps> = ({ onStart }) => {
               <strong>Writing Area:</strong> Jot down notes or key ideas in the writing section
             </li>
             <li style={{ marginBottom: '0.5rem' }}>
-              <strong>Timer:</strong> A 2-minute countdown will be displayed on the screen
+              <strong>Timer:</strong> A {hasTwoPhases ? '3-minute practice will be shown as two 1 minute 30 second phases' : '2-minute countdown'} will be displayed on the screen
             </li>
           </ul>
+
+          {hasSecondAi && (
+            <div style={{
+              backgroundColor: '#ecfdf5',
+              padding: '1rem',
+              borderRadius: '0.375rem',
+              borderLeft: '4px solid #10b981',
+              marginBottom: '1.5rem'
+            }}>
+              <p style={{ fontSize: '0.875rem', color: '#065f46' }}>
+                <strong>AI guidance may occasionally appear in the chat.</strong> When it does, select Insert to follow the guidance as you continue the discussion.
+              </p>
+            </div>
+          )}
+
+          {hasTwoPhases && (
+            <div style={{
+              backgroundColor: '#fefce8',
+              padding: '1rem',
+              borderRadius: '0.375rem',
+              borderLeft: '4px solid #f59e0b',
+              marginBottom: '1.5rem'
+            }}>
+              <p style={{ fontSize: '0.875rem', color: '#78350f', marginBottom: '0.5rem' }}>
+                <strong>This practice task has two phases.</strong>
+              </p>
+              <ol style={{ fontSize: '0.875rem', color: '#78350f', margin: 0, paddingLeft: '1.25rem' }}>
+                <li style={{ marginBottom: '0.375rem' }}><strong>Exploration (1 minute 30 seconds):</strong> use the chat to explore ideas. The writing area is locked.</li>
+                <li style={{ marginBottom: '0.375rem' }}><strong>Transition:</strong> when exploration ends, a popup pauses the timer. Select Next to begin the next phase.</li>
+                <li><strong>Writing (1 minute 30 seconds):</strong> write your proposal. You can no longer send prompts or request AI responses, but AI guidance may still appear.</li>
+              </ol>
+            </div>
+          )}
 
           <div style={{
             backgroundColor: '#dbeafe',

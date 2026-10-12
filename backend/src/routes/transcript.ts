@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs';
 import path from 'path';
 import WebSocket from 'ws';
+import { buildSessionTimeline } from '../services/eventTimelineBuilder';
 
 // Extend Request type to include file
 interface MulterRequest extends Request {
@@ -47,29 +48,46 @@ const upload = multer({
   }
 });
 
-// POST /api/transcript/session - Create OpenAI Realtime session for WebRTC
+// POST /api/transcript/session - Create OpenAI Realtime *transcription* session (GA client_secrets API)
+//
+// Paper 2 (2026-09): migrated off the deprecated /v1/realtime/sessions + gpt-4o-realtime-preview
+// stack. Current API: POST /v1/realtime/client_secrets returns an ephemeral client secret whose
+// session config (model, transcription, VAD) is baked in server-side; the frontend then uses that
+// secret directly against /v1/realtime/calls (see /realtime-connect below) — no more passing `model`
+// on the WebRTC call itself.
+// Paper 2 (2026-09): gpt-live-transcribe rejects session.audio.input.turn_detection on this
+// platform, so turn detection is disabled server-side. The browser runs a small local silence
+// detector and manually commits each audio chunk after 500ms of silence.
+const TRANSCRIPTION_PROMPT =
+  'A user is collaborating with an AI chatbot to create an adult learning platform proposal.';
+
 router.post('/session', async (req, res) => {
   try {
-    console.log('Creating new OpenAI Realtime session...');
+    console.log('Creating new OpenAI Realtime transcription session...');
 
-    // Get realtime model from environment or use default
-    const realtimeModel = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime';
+    const transcriptionModel = process.env.OPENAI_REALTIME_MODEL || 'gpt-live-transcribe';
 
-    // Create session using OpenAI Realtime Sessions API
-    const response = await fetch("https://api.openai.com/v1/realtime/sessions", {
+    const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: realtimeModel,
-        voice: "alloy",
-        modalities: ["text", "audio"],
-        instructions: "You are a helpful assistant that provides live transcription. Focus on accurate speech-to-text conversion. Respond with transcribed text as you hear it.",
-        input_audio_transcription: {
-          model: "whisper-1"
-        }
+        session: {
+          type: "transcription",
+          audio: {
+            input: {
+              format: { type: "audio/pcm", rate: 24000 },
+              transcription: {
+                model: transcriptionModel,
+                prompt: TRANSCRIPTION_PROMPT,
+                delay: "low",
+              },
+              turn_detection: null,
+            },
+          },
+        },
       }),
     });
 
@@ -79,14 +97,37 @@ router.post('/session', async (req, res) => {
       throw new Error(`OpenAI API error: ${response.status} ${errorText}`);
     }
 
-    const session = await response.json();
-    console.log('OpenAI Realtime session created:', session.id);
+    const data: any = await response.json();
+
+    // OpenAI's docs did not render a fully pinned-down response shape for this GA endpoint at the
+    // time this was written, so parse defensively: support both a top-level `value`/`expires_at`
+    // and a nested `client_secret.value`/`client_secret.expires_at`.
+    const clientSecretValue = data.value ?? data.client_secret?.value;
+    const clientSecretExpiresAt = data.expires_at ?? data.client_secret?.expires_at;
+
+    if (!clientSecretValue) {
+      console.error('Unexpected /v1/realtime/client_secrets response shape:', JSON.stringify(data));
+      throw new Error('OpenAI client_secrets response did not include a client secret value');
+    }
+
+    // Reshape into what the frontend (WebRTCTranscript.tsx) already expects:
+    // { id, client_secret: { value, expires_at }, expires_at }
+    const session = {
+      id: data.session?.id ?? data.id ?? `sess_${Date.now()}`,
+      client_secret: {
+        value: clientSecretValue,
+        expires_at: clientSecretExpiresAt,
+      },
+      expires_at: clientSecretExpiresAt,
+    };
+
+    console.log('OpenAI Realtime transcription session created:', session.id);
 
     res.json({
       session,
-      model: realtimeModel,  // Pass model to frontend
+      model: transcriptionModel,  // Pass model to frontend
       status: 'session_created',
-      message: 'OpenAI Realtime session created for WebRTC'
+      message: 'OpenAI Realtime transcription session created for WebRTC'
     });
 
   } catch (error) {
@@ -101,7 +142,7 @@ router.post('/session', async (req, res) => {
 // POST /api/transcript/realtime-connect - Proxy WebRTC connection to OpenAI (CORS fix)
 router.post('/realtime-connect', async (req, res) => {
   try {
-    const { sdp, model, clientSecret } = req.body;
+    const { sdp, clientSecret } = req.body;
 
     if (!sdp || !clientSecret) {
       return res.status(400).json({
@@ -109,10 +150,11 @@ router.post('/realtime-connect', async (req, res) => {
       });
     }
 
-    console.log('Proxying WebRTC connection to OpenAI Realtime API...');
+    console.log('Proxying WebRTC connection to OpenAI Realtime API (GA /calls endpoint)...');
 
-    // Forward the SDP offer to OpenAI
-    const realtimeUrl = `https://api.openai.com/v1/realtime?model=${model || 'gpt-realtime'}`;
+    // GA API: no ?model= query param anymore — the model is already baked into the ephemeral
+    // client secret's session config from /v1/realtime/client_secrets (see /session above).
+    const realtimeUrl = 'https://api.openai.com/v1/realtime/calls';
 
     const response = await fetch(realtimeUrl, {
       method: 'POST',
@@ -159,6 +201,85 @@ router.post('/realtime-stop', (req, res) => {
     error: 'Endpoint deprecated. WebRTC sessions are managed client-side.',
     message: 'Sessions will automatically expire or can be closed client-side'
   });
+});
+
+// POST /api/transcript/segments/batch - Paper 2 Phase 2: batch-upload completed speech segments
+// to `speech_segments` in near-real-time. Mirrors useInteractionLogger's batching pattern
+// (WebRTCTranscript.tsx queues completed transcript segments and flushes every few seconds, plus
+// once more on stop/unmount) so the transcript is available in the DB incrementally instead of
+// only existing in the browser until final submission export. Used for both practice and actual
+// sessions - practice transcripts get the same real-time upload, just tagged with a
+// `practice_...` session id.
+//
+// Timestamp convention (2026-09, worth flagging for Phase 3's eventTimelineBuilder): these are
+// ABSOLUTE epoch milliseconds (Date.now()-based), computed client-side as
+// recordingStartTime + the relative offset WebRTCTranscript already tracks internally.
+// `interaction_logs.timestamp`, by contrast, stores RELATIVE milliseconds since session start
+// (see routes/logging.ts). Phase 3 will need to normalize between the two conventions when
+// merging speech into the unified event timeline - e.g. by adding sessionStartTime to a relative
+// value, or subtracting it from an absolute one - rather than assuming they're already aligned.
+router.post('/segments/batch', async (req: MulterRequest, res) => {
+  try {
+    const { sessionId, segments } = req.body;
+    const db = req.db;
+
+    if (!sessionId || !Array.isArray(segments)) {
+      return res.status(400).json({ error: 'sessionId and segments array are required' });
+    }
+    if (segments.length === 0) {
+      return res.json({ success: true, count: 0 });
+    }
+    if (!db) {
+      return res.json({ success: true, count: 0, message: 'Demo mode: not saved to database' });
+    }
+
+    // Defensive auto-create, mirroring routes/logging.ts - speech_segments has a foreign key on
+    // sessions(id), and this endpoint can in principle be called before /api/session/create's
+    // insert has committed (network reordering, retries, etc.).
+    try {
+      const [existingSessions] = await db.execute('SELECT id FROM sessions WHERE id = ?', [sessionId]);
+      if ((existingSessions as any[]).length === 0) {
+        console.log(`[Transcript] Session ${sessionId} not found, creating it...`);
+        await db.execute(
+          'INSERT INTO sessions (id, participant_id, status) VALUES (?, ?, ?)',
+          [sessionId, 'auto-created', 'active']
+        );
+      }
+    } catch (sessionError) {
+      console.error('[Transcript] Error checking/creating session:', sessionError);
+      // Continue anyway - will fail on the foreign key below if there's a real issue.
+    }
+
+    const values = segments.map((seg: any) => [
+      sessionId,
+      seg.timestampStart ?? 0,
+      seg.timestampEnd ?? 0,
+      seg.transcription || '',
+    ]);
+    const placeholders = values.map(() => '(?, ?, ?, ?)').join(', ');
+    const flatValues = values.flat();
+
+    await db.execute(
+      `INSERT INTO speech_segments (session_id, timestamp_start, timestamp_end, transcription)
+       VALUES ${placeholders}`,
+      flatValues
+    );
+
+    try {
+      await buildSessionTimeline(db, sessionId);
+    } catch (timelineError) {
+      console.error('Failed to refresh session event timeline after speech upload:', timelineError);
+    }
+
+    res.json({ success: true, count: values.length });
+
+  } catch (error) {
+    console.error('Speech segment batch upload error:', error);
+    res.status(500).json({
+      error: 'Failed to save speech segments',
+      message: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
 });
 
 // POST /api/transcript/transcribe-chunk - Transcribe audio using OpenAI Whisper (fallback)

@@ -1,4 +1,12 @@
 -- Research Platform Database Schema
+--
+-- NOTE (2026-09): this file is out of date and NOT what the running server actually creates.
+-- The live schema is defined in backend/src/index.ts (createTables()), which has diverged from
+-- this file over time (different table names/columns in places, e.g. messages/submissions/writing_drafts).
+-- Treat backend/src/index.ts as the source of truth. The Paper2 Manipulation System tables/columns
+-- (sessions.group_id, messages.is_guidance, manipulation_state.last_evaluated_event_id, move_ledger, manipulation_state, agent_execution_log,
+-- session_events, speech_segments) are documented separately in migrate_add_paper2_manipulation_system.sql
+-- and are created automatically by createTables() on server startup.
 
 USE research_platform;
 

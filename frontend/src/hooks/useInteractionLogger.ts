@@ -46,6 +46,9 @@ export type UIAction =
   | 'input_blur'
   | 'composer_interaction'
   | 'message_action'
+  | 'phase_transition_confirmed'
+  | 'phase_transition_completed'
+  | 'phase_transition_client_acknowledged'
   | 'navigation';
 
 export type Section = 'prompting' | 'transcript' | 'response' | 'writing' | 'regenerate-menu';
@@ -415,7 +418,11 @@ export const useInteractionLogger = (options: UseInteractionLoggerOptions) => {
         if (currentHoverTargetRef.current === element) {
           // Get messageId for hover logging
           const messageId = getMessageIdFromElement(target);
-          const metadata = messageId ? { messageId } : undefined;
+          const viewedAiResponse = isAiResponseContent(target);
+          const metadata = {
+            ...(messageId !== undefined ? { messageId } : {}),
+            ...(viewedAiResponse ? { viewedAiResponse: true } : {}),
+          };
 
           logEvent({
             eventType: 'mouse',
@@ -453,7 +460,11 @@ export const useInteractionLogger = (options: UseInteractionLoggerOptions) => {
       if (lastLoggedHoverTargetRef.current === element) {
         // Get messageId for hover_end logging
         const messageId = getMessageIdFromElement(target);
-        const metadata = messageId ? { messageId } : undefined;
+        const viewedAiResponse = isAiResponseContent(target);
+        const metadata = {
+          ...(messageId !== undefined ? { messageId } : {}),
+          ...(viewedAiResponse ? { viewedAiResponse: true } : {}),
+        };
 
         logEvent({
           eventType: 'mouse',
@@ -901,6 +912,10 @@ function getSectionFromElement(element: HTMLElement | null): Section | undefined
   // Traverse up to find section
   let current: HTMLElement | null = element;
   while (current) {
+    const explicitSection = current.getAttribute('data-interaction-section');
+    if (explicitSection === 'prompting' || explicitSection === 'transcript' || explicitSection === 'response' || explicitSection === 'writing' || explicitSection === 'regenerate-menu') {
+      return explicitSection;
+    }
     // Safely get className as string (handles SVG elements)
     const classes = typeof current.className === 'string' ? current.className : '';
 
@@ -999,13 +1014,21 @@ function isInteractiveElement(element: HTMLElement | null): boolean {
   const tagName = element.tagName.toLowerCase();
   const interactiveTags = ['button', 'a', 'input', 'textarea', 'select', 'label'];
 
-  return (
+  const directlyInteractive = (
     interactiveTags.includes(tagName) ||
     element.hasAttribute('data-testid') ||
     element.onclick !== null ||
     element.getAttribute('role') === 'button' ||
     element.style.cursor === 'pointer'
   );
+  // The AI-response body itself is a meaningful reading target even though its
+  // Markdown text is not a button or input. This remains deliberately limited
+  // to elements explicitly marked by ChatInterface, avoiding general hover noise.
+  return directlyInteractive || Boolean(element.closest?.('[data-ai-response-content="true"]'));
+}
+
+function isAiResponseContent(element: HTMLElement | null): boolean {
+  return Boolean(element?.closest?.('[data-ai-response-content="true"]'));
 }
 
 /**

@@ -29,12 +29,51 @@ export interface WebRTCTranscriptRef {
 
 interface WebRTCTranscriptProps {
   isPracticeMode?: boolean;
+  // Paper 2 (2026-09) test mode: called with the full list of completed transcript chunks
+  // (one entry per finished segment, in completion order) every time a new segment completes,
+  // so a page-level debug panel can show each chunk on its own line. undefined for the regular
+  // participant flow - has no effect there.
+  onTranscriptUpdate?: (chunks: string[]) => void;
+  // In-progress deltas make it clear in test mode that the stream is still active before a
+  // completed chunk is emitted.
+  onTranscriptPartialUpdate?: (text: string | null) => void;
+  // Reports live microphone activity so process-analysis silence detection is based on audio,
+  // not on delayed transcription chunks.
+  onSpeechActivity?: (timestamp: number) => void;
+  // Paper 2 Phase 2 (2026-09): required so completed transcript segments can be batch-uploaded to
+  // speech_segments in near-real-time (see flushPendingSegments below). Both practice and actual
+  // pages pass their own sessionId here.
+  sessionId: string;
 }
 
-const WebRTCTranscript = forwardRef<WebRTCTranscriptRef, WebRTCTranscriptProps>(({ isPracticeMode = false }, ref) => {
+// Paper 2 Phase 2: how often to flush queued transcript segments to /api/transcript/segments/batch,
+// mirroring useInteractionLogger's default batchInterval.
+const SEGMENT_FLUSH_INTERVAL_MS = 5000;
+const LOCAL_SILENCE_BREAKPOINT_MS = 500;
+const LOCAL_VOICE_RMS_THRESHOLD = 0.015;
+// gpt-live-transcribe has no server VAD. Preserve the 500ms local pause boundary, but
+// never leave continuous think-aloud speech uncommitted indefinitely when no pause occurs.
+const MAX_UNCOMMITTED_SPEECH_MS = 4000;
+
+// Paper 2 (2026-09): mirrors the backend's TRANSCRIPTION_PROMPT in transcript.ts - resent here
+// on session.update for the same reason the model/delay fields are resent (belt-and-suspenders
+// in case the data channel opens before the backend's /session config is fully applied).
+const TRANSCRIPTION_PROMPT =
+  'A user is collaborating with an AI chatbot to create an adult learning platform proposal.';
+
+interface PendingSpeechSegment {
+  timestampStart: number; // absolute epoch ms - see comment on the backend route for why
+  timestampEnd: number; // absolute epoch ms
+  transcription: string;
+}
+
+const WebRTCTranscript = forwardRef<WebRTCTranscriptRef, WebRTCTranscriptProps>(({ isPracticeMode = false, onTranscriptUpdate, onTranscriptPartialUpdate, onSpeechActivity, sessionId }, ref) => {
   const [isRecording, setIsRecording] = useState(false);
+  // Paper 2 (2026-09): kept as an array of completed chunks (not a joined string) so the test
+  // mode debug panel can render one line per chunk instead of one run-on paragraph. The array
+  // itself is only read inside the setTranscriptChunks updater below (via 'prev'), never in JSX.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [transcript, setTranscript] = useState(''); // Used in backend API, not displayed in UI
+  const [transcriptChunks, setTranscriptChunks] = useState<string[]>([]);
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [isConnecting, setIsConnecting] = useState(false); // Used for connection state management
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
@@ -49,6 +88,20 @@ const WebRTCTranscript = forwardRef<WebRTCTranscriptRef, WebRTCTranscriptProps>(
   const recordingStartTimeRef = useRef<number>(0);
   const transcriptWithTimestampsRef = useRef<Array<TranscriptEntry>>([]);
   const lastTranscriptRef = useRef<{text: string, timestamp: number} | null>(null);
+  const partialTranscriptsRef = useRef<Map<string, string>>(new Map());
+  const lastSpeechActivityCallbackAtRef = useRef(0);
+
+  // Paper 2 Phase 2: queue of completed segments not yet uploaded to speech_segments, and the
+  // interval that periodically flushes them (started when the data channel opens, stopped in
+  // cleanup()).
+  const pendingSegmentsRef = useRef<PendingSpeechSegment[]>([]);
+  const segmentFlushIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const vadAnimationFrameRef = useRef<number | null>(null);
+  const hasUncommittedSpeechRef = useRef(false);
+  const localSpeechStartOffsetRef = useRef<number | null>(null);
+  const lastVoiceDetectedAtRef = useRef<number | null>(null);
+  const manualCommitStartQueueRef = useRef<number[]>([]);
 
   // Track speech start times for correct ordering
   // Key: item_id, Value: timestamp when speech started
@@ -57,6 +110,128 @@ const WebRTCTranscript = forwardRef<WebRTCTranscriptRef, WebRTCTranscriptProps>(
   const speechOrderCounterRef = useRef<number>(0);
 
   const sessionLabel = isPracticeMode ? '[WebRTC-Practice]' : '[WebRTC-Actual]';
+
+  // Paper 2 Phase 2: POST whatever segments are currently queued, then clear the queue. Safe to
+  // call even when the queue is empty (no-op) or sessionId is falsy (shouldn't happen in
+  // practice, but this component doesn't have a way to force a value at the type level here).
+  const flushPendingSegments = React.useCallback(() => {
+    if (pendingSegmentsRef.current.length === 0 || !sessionId) return;
+    const batch = pendingSegmentsRef.current;
+    pendingSegmentsRef.current = [];
+    fetch('/api/transcript/segments/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, segments: batch }),
+    }).catch((err) => {
+      console.error(`${sessionLabel} Failed to upload speech segments:`, err);
+    });
+  }, [sessionId, sessionLabel]);
+
+  const sendManualAudioCommit = React.useCallback((reason: 'silence' | 'max_duration' | 'cleanup' = 'silence') => {
+    const dataChannel = dataChannelRef.current;
+    if (
+      !hasUncommittedSpeechRef.current ||
+      !dataChannel ||
+      dataChannel.readyState !== 'open' ||
+      !recordingStartTimeRef.current
+    ) {
+      return;
+    }
+
+    const speechStartOffset = localSpeechStartOffsetRef.current ?? Date.now() - recordingStartTimeRef.current;
+    manualCommitStartQueueRef.current.push(speechStartOffset);
+    dataChannel.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+
+    hasUncommittedSpeechRef.current = false;
+    localSpeechStartOffsetRef.current = null;
+    lastVoiceDetectedAtRef.current = null;
+    console.log(`${sessionLabel} Manual audio commit sent (${reason})`);
+  }, [sessionLabel]);
+
+  const stopLocalSilenceDetection = React.useCallback(() => {
+    if (vadAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(vadAnimationFrameRef.current);
+      vadAnimationFrameRef.current = null;
+    }
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch((err) => {
+        console.warn(`${sessionLabel} Failed to close audio context:`, err);
+      });
+      audioContextRef.current = null;
+    }
+  }, [sessionLabel]);
+
+  const startLocalSilenceDetection = React.useCallback((stream: MediaStream) => {
+    stopLocalSilenceDetection();
+
+    const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextCtor) {
+      console.warn(`${sessionLabel} Web Audio API unavailable; realtime transcript chunks may not complete automatically`);
+      return;
+    }
+
+    const audioContext = new AudioContextCtor();
+    const source = audioContext.createMediaStreamSource(stream);
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 1024;
+    source.connect(analyser);
+    audioContextRef.current = audioContext;
+
+    // Recording is started automatically when the task page loads. Some browsers create an
+    // AudioContext in the suspended state outside a direct user gesture, which leaves the VAD
+    // analyser reading silence forever. Resume it explicitly and retain the max-duration guard
+    // below for environments that still restrict local audio analysis.
+    if (audioContext.state === 'suspended') {
+      audioContext.resume().catch((err: unknown) => {
+        console.warn(`${sessionLabel} Local VAD audio context could not resume:`, err);
+      });
+    }
+
+    const samples = new Uint8Array(analyser.fftSize);
+    const tick = () => {
+      analyser.getByteTimeDomainData(samples);
+
+      let sumSquares = 0;
+      for (let i = 0; i < samples.length; i += 1) {
+        const centered = (samples[i] - 128) / 128;
+        sumSquares += centered * centered;
+      }
+
+      const rms = Math.sqrt(sumSquares / samples.length);
+      const now = Date.now();
+      const offset = now - recordingStartTimeRef.current;
+
+      if (rms >= LOCAL_VOICE_RMS_THRESHOLD) {
+        if (now - lastSpeechActivityCallbackAtRef.current >= 250) {
+          lastSpeechActivityCallbackAtRef.current = now;
+          onSpeechActivity?.(now);
+        }
+        if (!hasUncommittedSpeechRef.current) {
+          hasUncommittedSpeechRef.current = true;
+          localSpeechStartOffsetRef.current = offset;
+          console.log(`${sessionLabel} Local speech started at ${offset}ms`);
+        }
+        lastVoiceDetectedAtRef.current = now;
+        if (
+          hasUncommittedSpeechRef.current &&
+          localSpeechStartOffsetRef.current !== null &&
+          offset - localSpeechStartOffsetRef.current >= MAX_UNCOMMITTED_SPEECH_MS
+        ) {
+          sendManualAudioCommit('max_duration');
+        }
+      } else if (
+        hasUncommittedSpeechRef.current &&
+        lastVoiceDetectedAtRef.current !== null &&
+        now - lastVoiceDetectedAtRef.current >= LOCAL_SILENCE_BREAKPOINT_MS
+      ) {
+        sendManualAudioCommit('silence');
+      }
+
+      vadAnimationFrameRef.current = requestAnimationFrame(tick);
+    };
+
+    tick();
+  }, [onSpeechActivity, sendManualAudioCommit, sessionLabel, stopLocalSilenceDetection]);
 
   // Log component mount/unmount
   useEffect(() => {
@@ -82,6 +257,10 @@ const WebRTCTranscript = forwardRef<WebRTCTranscriptRef, WebRTCTranscriptProps>(
       setIsConnecting(true);
       setConnectionStatus('connecting');
       setError('');
+      hasUncommittedSpeechRef.current = false;
+      localSpeechStartOffsetRef.current = null;
+      lastVoiceDetectedAtRef.current = null;
+      manualCommitStartQueueRef.current = [];
 
       // Step 1: Create OpenAI Realtime session
       console.log(`${sessionLabel} Creating OpenAI Realtime session...`);
@@ -118,24 +297,42 @@ const WebRTCTranscript = forwardRef<WebRTCTranscriptRef, WebRTCTranscriptProps>(
         console.log(`${sessionLabel} Data channel opened`);
         setConnectionStatus('connected');
 
-        // Send session update to enable input audio transcription with server VAD
+        // Paper 2 Phase 2: start periodically flushing completed transcript segments to the
+        // backend. Cleared in cleanup() below.
+        if (segmentFlushIntervalRef.current) {
+          clearInterval(segmentFlushIntervalRef.current);
+        }
+        segmentFlushIntervalRef.current = setInterval(flushPendingSegments, SEGMENT_FLUSH_INTERVAL_MS);
+
+        // Send session update to (re)confirm transcription model + realtime transcription settings.
+        // GA schema (2026-09 migration off gpt-4o-realtime-preview/whisper-1): session config now
+        // nests under session.audio.input instead of top-level input_audio_transcription/turn_detection.
+        // This is already baked into the ephemeral client secret by the backend's /session call, but
+        // we resend it here too in case the data channel opens before that config is fully applied.
+        // Paper 2 (2026-09): use whatever model the backend's /session call actually configured
+        // (destructured as 'model' above) rather than hardcoding a model name here - otherwise
+        // changing OPENAI_REALTIME_MODEL on the backend alone would silently desync this
+        // resend-on-open confirmation from the model actually baked into the ephemeral client
+        // secret. gpt-live-transcribe uses delay: 'low' for faster deltas. This platform's API
+        // rejects turn_detection for gpt-live-transcribe, so browser-side silence detection commits
+        // buffered audio after 500ms of local silence.
         dataChannel.send(JSON.stringify({
           type: 'session.update',
           session: {
-            input_audio_transcription: {
-              model: 'whisper-1'
-            },
-            // Enable server-side VAD (Voice Activity Detection) to detect speech segments
-            turn_detection: {
-              type: 'server_vad',
-              threshold: 0.5,
-              prefix_padding_ms: 300,
-              silence_duration_ms: 500
-            },
-            modalities: ['text']    // Only text, no audio output
+            type: 'transcription',
+            audio: {
+              input: {
+                transcription: {
+                  model: model,
+                  prompt: TRANSCRIPTION_PROMPT,
+                  delay: 'low'
+                },
+                turn_detection: null
+              }
+            }
           }
         }));
-        console.log(`${sessionLabel} Session update sent - transcription with server VAD enabled, audio output disabled`);
+        console.log(`${sessionLabel} Session update sent - ${model} with low delay and local 500ms silence commits confirmed`);
       };
 
       dataChannel.onmessage = (event) => {
@@ -178,17 +375,36 @@ const WebRTCTranscript = forwardRef<WebRTCTranscriptRef, WebRTCTranscriptProps>(
             }
           }
 
+          if (message.type === 'input_audio_buffer.committed' && message.item_id) {
+            const speechStartTime = manualCommitStartQueueRef.current.shift();
+            if (speechStartTime !== undefined) {
+              speechStartTimesRef.current.set(message.item_id, speechStartTime);
+              console.log(`${sessionLabel} Manual commit item_id: ${message.item_id}, started at: ${speechStartTime}ms`);
+            }
+          }
+
+          if (message.type === 'conversation.item.input_audio_transcription.delta') {
+            const itemId = message.item_id || 'in_progress';
+            const delta = typeof message.delta === 'string' ? message.delta : '';
+            if (delta) {
+              const updated = `${partialTranscriptsRef.current.get(itemId) || ''}${delta}`;
+              partialTranscriptsRef.current.set(itemId, updated);
+              onTranscriptPartialUpdate?.(updated);
+            }
+          }
+
           // Handle transcription completion
           if (message.type === 'conversation.item.input_audio_transcription.completed') {
             const transcriptText = message.transcript;
             const receiveTimestamp = Date.now() - recordingStartTimeRef.current;
             const itemId = message.item_id;
 
+            if (itemId) partialTranscriptsRef.current.delete(itemId);
+            const remainingPartials = Array.from(partialTranscriptsRef.current.values());
+            onTranscriptPartialUpdate?.(remainingPartials.length ? remainingPartials[remainingPartials.length - 1] : null);
+
             // Get the speech start time for this item (for correct ordering)
             const speechStartTime = itemId ? speechStartTimesRef.current.get(itemId) : null;
-
-            console.log(`${sessionLabel} Transcription completed:`, transcriptText);
-            console.log(`${sessionLabel} item_id: ${itemId}, speech started at: ${speechStartTime}ms, received at: ${receiveTimestamp}ms`);
 
             // Deduplication: Check if this is a duplicate of the last transcript
             const isDuplicate = lastTranscriptRef.current &&
@@ -197,7 +413,22 @@ const WebRTCTranscript = forwardRef<WebRTCTranscriptRef, WebRTCTranscriptProps>(
 
             if (!isDuplicate) {
               // Not a duplicate, save it
-              setTranscript(prev => prev + ' ' + transcriptText);
+              setTranscriptChunks(prev => {
+                const updated = [...prev, transcriptText];
+                onTranscriptUpdate?.(updated);
+                return updated;
+              });
+
+              // Paper 2 Phase 2: queue this segment for near-real-time upload to speech_segments.
+              // Converted to absolute epoch ms (recordingStartTimeRef is itself a Date.now()
+              // snapshot from when recording started) - see the backend route's comment on why
+              // absolute rather than relative-to-session-start.
+              pendingSegmentsRef.current.push({
+                timestampStart: recordingStartTimeRef.current + (speechStartTime ?? receiveTimestamp),
+                timestampEnd: recordingStartTimeRef.current + receiveTimestamp,
+                transcription: transcriptText,
+              });
+              flushPendingSegments();
 
               // Determine speech order based on when this speech actually started
               // If we have the speech start time, find its order; otherwise use receive order
@@ -228,8 +459,6 @@ const WebRTCTranscript = forwardRef<WebRTCTranscriptRef, WebRTCTranscriptProps>(
                 e.speechOrder = idx;
               });
 
-              console.log(`${sessionLabel} Transcript saved and sorted. Total count:`, transcriptWithTimestampsRef.current.length);
-
               // Update last transcript reference
               lastTranscriptRef.current = { text: transcriptText, timestamp: receiveTimestamp };
 
@@ -237,15 +466,13 @@ const WebRTCTranscript = forwardRef<WebRTCTranscriptRef, WebRTCTranscriptProps>(
               if (itemId) {
                 speechStartTimesRef.current.delete(itemId);
               }
-            } else {
-              console.log(`${sessionLabel} Duplicate transcript ignored`);
             }
           } else if (message.type === 'error') {
             console.error(`${sessionLabel} OpenAI error:`, message);
             setError(message.error?.message || 'Unknown error from OpenAI');
           }
           // Log other message types for debugging (but not the common ones)
-          else if (!['session.created', 'session.updated', 'input_audio_buffer.speech_started', 'input_audio_buffer.speech_stopped', 'input_audio_buffer.committed', 'conversation.item.created', 'response.created', 'response.done'].includes(message.type)) {
+          else if (!['session.created', 'session.updated', 'input_audio_buffer.speech_started', 'input_audio_buffer.speech_stopped', 'input_audio_buffer.committed', 'conversation.item.created', 'response.created', 'response.done', 'conversation.item.input_audio_transcription.delta'].includes(message.type)) {
             console.log(`${sessionLabel} Received message type:`, message.type);
           }
         } catch (error) {
@@ -295,6 +522,7 @@ const WebRTCTranscript = forwardRef<WebRTCTranscriptRef, WebRTCTranscriptProps>(
         mediaRecorder.start(1000); // Collect data every second
         mediaRecorderRef.current = mediaRecorder;
         recordingStartTimeRef.current = Date.now();
+        startLocalSilenceDetection(stream);
         console.log(`${sessionLabel} Started audio recording for file save`);
       } catch (recorderError) {
         console.error('Failed to start MediaRecorder:', recorderError);
@@ -317,7 +545,6 @@ const WebRTCTranscript = forwardRef<WebRTCTranscriptRef, WebRTCTranscriptProps>(
         },
         body: JSON.stringify({
           sdp: offer.sdp,
-          model: model || 'gpt-realtime',
           clientSecret: session.client_secret.value
         }),
       });
@@ -350,6 +577,17 @@ const WebRTCTranscript = forwardRef<WebRTCTranscriptRef, WebRTCTranscriptProps>(
   const cleanup = useCallback(() => {
     console.log(`${sessionLabel} Cleaning up session...`);
 
+    // Paper 2 Phase 2: stop the periodic flush and send whatever's still queued, so the last few
+    // seconds of a recording aren't silently dropped when the session ends.
+    if (segmentFlushIntervalRef.current) {
+      clearInterval(segmentFlushIntervalRef.current);
+      segmentFlushIntervalRef.current = null;
+    }
+    flushPendingSegments();
+
+    sendManualAudioCommit('cleanup');
+    stopLocalSilenceDetection();
+
     // Stop media recorder
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
@@ -376,10 +614,12 @@ const WebRTCTranscript = forwardRef<WebRTCTranscriptRef, WebRTCTranscriptProps>(
 
     // Reset deduplication reference
     lastTranscriptRef.current = null;
+    partialTranscriptsRef.current.clear();
+    onTranscriptPartialUpdate?.(null);
 
     setConnectionStatus('disconnected');
     sessionRef.current = null;
-  }, [sessionLabel]);
+  }, [sessionLabel, flushPendingSegments, onTranscriptPartialUpdate, sendManualAudioCommit, stopLocalSilenceDetection]);
 
   const stopRecording = useCallback(() => {
     console.log(`${sessionLabel} Stopping recording...`);

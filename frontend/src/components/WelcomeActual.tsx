@@ -2,9 +2,13 @@ import React from 'react';
 
 interface WelcomeActualProps {
   onStart: () => void;
+  groupId: string;
 }
 
-const WelcomeActual: React.FC<WelcomeActualProps> = ({ onStart }) => {
+const WelcomeActual: React.FC<WelcomeActualProps> = ({ onStart, groupId }) => {
+  const hasSecondAi = ['2', '3', '4', '5'].includes(groupId.trim());
+  const hasTwoPhases = ['4', '5', 'lowtf_hightm', 'lowtf_lowtm'].includes(groupId.trim().toLowerCase());
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -98,7 +102,7 @@ const WelcomeActual: React.FC<WelcomeActualProps> = ({ onStart }) => {
               <strong>Minimum Time:</strong> Please spend at least 10 minutes on this task
             </li>
             <li style={{ marginBottom: '0.5rem' }}>
-              <strong>Maximum Time:</strong> 25 minutes (you will receive a 5-minute warning at the 20-minute mark)
+              <strong>Maximum Time:</strong> 25 minutes
             </li>
             <li style={{ marginBottom: '0.5rem' }}>
               <strong>Verbalize Your Thoughts:</strong> Continue speaking out loud as you work
@@ -107,6 +111,38 @@ const WelcomeActual: React.FC<WelcomeActualProps> = ({ onStart }) => {
               <strong>Use All Tools:</strong> Feel free to use the AI assistant and writing area, but please remain on this website throughout the entire process until you submit your final work
             </li>
           </ul>
+
+          {hasSecondAi && (
+            <div style={{
+              backgroundColor: '#ecfdf5',
+              padding: '1rem',
+              borderRadius: '0.375rem',
+              borderLeft: '4px solid #10b981',
+              marginBottom: '1.5rem'
+            }}>
+              <p style={{ fontSize: '0.875rem', color: '#065f46' }}>
+                <strong>AI guidance may occasionally appear in the chat.</strong> When it does, select Insert to follow the guidance as you continue the discussion.
+              </p>
+            </div>
+          )}
+
+          {hasTwoPhases && (
+            <div style={{
+              backgroundColor: '#fefce8',
+              padding: '1rem',
+              borderRadius: '0.375rem',
+              borderLeft: '4px solid #f59e0b',
+              marginBottom: '1.5rem'
+            }}>
+              <p style={{ fontSize: '0.875rem', color: '#78350f', marginBottom: '0.5rem' }}>
+                <strong>This task has two phases.</strong>
+              </p>
+              <ol style={{ fontSize: '0.875rem', color: '#78350f', margin: 0, paddingLeft: '1.25rem' }}>
+                <li style={{ marginBottom: '0.375rem' }}><strong>Exploration:</strong> spend at least 5 minutes, and no more than 20 minutes, using the chat to explore ideas. The writing area is locked during this phase. The Next button becomes available after 5 minutes; move to writing by 20 minutes so you have enough time to complete your written proposal.</li>
+                <li><strong>Writing:</strong> after selecting Next, write your response. You can no longer send prompts or request AI responses, but AI guidance may still appear in the chat.</li>
+              </ol>
+            </div>
+          )}
 
         </div>
 

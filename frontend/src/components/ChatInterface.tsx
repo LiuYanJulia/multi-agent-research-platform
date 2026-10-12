@@ -1,5 +1,6 @@
-import React, { useState, useRef, useEffect, memo } from 'react';
+import React, { useState, useRef, useEffect, useCallback, memo } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { AgentStageEvent } from './DebugPanel';
 
 interface Message {
   id: string;
@@ -12,6 +13,7 @@ interface Message {
   isLoading?: boolean; // Track loading state for assistant messages
   referencedMessageId?: string; // ID of the message this is referring to
   referencedMessageContent?: string; // Preview content of referenced message
+  isGuidance?: boolean; // Paper 2: AI guidance message (distinct chat bubble)
 }
 
 interface ChatInterfaceProps {
@@ -19,18 +21,91 @@ interface ChatInterfaceProps {
   sessionStartTime: number;
   logger: {
     logEvent: (event: any) => void;
-    sendBatch: () => void;
+    sendBatch: () => Promise<void>;
   };
+  // Paper 2 (2026-09) test mode: forwards agentStage SSE events up to the page-level debug panel.
+  // undefined for the regular participant flow - has no effect there.
+  onAgentStage?: (stage: AgentStageEvent) => void;
+  transcriptChunks?: string[];
+  speechActivityAt?: number;
+  // Low-TF Phase 2 disables participant-initiated prompts but keeps automatic AI guidance active.
+  promptingEnabled?: boolean;
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTime, logger }) => {
+interface InterventionPreview {
+  id: string;
+  text: string;
+  source: 'stream' | 'automatic';
+}
+
+const GUIDANCE_PREVIEW_TIMEOUT_MS = 60_000;
+
+// This must stay at module scope.  Defining a memoized component inside
+// ChatInterface creates a new component type on every parent render, which
+// unmounts the response DOM and breaks an in-progress text selection.
+const MemoizedMarkdown = memo(({ content }: { content: string }) => (
+  <ReactMarkdown>{content}</ReactMarkdown>
+));
+MemoizedMarkdown.displayName = 'MemoizedMarkdown';
+
+// Keep the complete guidance visible to researchers even when a participant never selects Insert.
+function logAiGuidanceToConsole(guidance: { id?: string; text: string; source: string }): void {
+  console.groupCollapsed(`[AI guidance] ${guidance.source}`);
+  console.log('Guidance ID:', guidance.id ?? 'not provided');
+  console.log('Message:', guidance.text);
+  console.groupEnd();
+}
+
+// The Debug Panel is the primary transcript viewer. Keep the browser console
+// focused on the evaluator's audit trail instead of printing every speech chunk.
+function logEvaluationAgentStage(stage: AgentStageEvent): void {
+  if (stage.agent !== 'evaluation_agent') return;
+
+  if (stage.status === 'started') {
+    console.groupCollapsed('[Evaluation Agent] initiated');
+    console.log('Trigger:', stage.detail || 'chat turn');
+    console.groupEnd();
+    return;
+  }
+
+  if (stage.status === 'completed') {
+    const moveCount = stage.evaluationMoves?.length ?? 0;
+    console.groupCollapsed(`[Evaluation Agent] completed — ${moveCount} move${moveCount === 1 ? '' : 's'}`);
+    console.log('Input (session timeline; system prompt excluded):', stage.evaluationInput ?? []);
+    console.log('Output (this partition only):', stage.evaluationMoves ?? []);
+    console.log('Raw model response / parser detail:', stage.evaluationRaw ?? null);
+    if (stage.detail) console.log('Summary:', stage.detail);
+    console.groupEnd();
+    return;
+  }
+
+  if (stage.status === 'error') {
+    console.error('[Evaluation Agent] failed:', stage.detail || 'Unknown error');
+  }
+}
+
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTime, logger, onAgentStage, transcriptChunks = [], speechActivityAt = 0, promptingEnabled = true }) => {
   const [prompt, setPrompt] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [currentModel, setCurrentModel] = useState('gpt-5-mini'); // Default fallback
   const [expandedMessageId, setExpandedMessageId] = useState<string | null>(null); // Track which message's expanded section is open
+  const [interventionPreview, setInterventionPreview] = useState<InterventionPreview | null>(null);
+  const [insertingIntervention, setInsertingIntervention] = useState(false);
+  const [guidanceFlashKey, setGuidanceFlashKey] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const analyzedTranscriptCountRef = useRef(0);
+  const availableTranscriptCountRef = useRef(0);
+  const lastAutomaticAnalysisTranscriptCountRef = useRef(0);
+  const wordsSinceAnalysisRef = useRef(0);
+  const continuousSpeechStartedAtRef = useRef<number | null>(null);
+  const analysisInFlightRef = useRef(false);
+  const idleAnalysisTimerRef = useRef<number | null>(null);
+  const continuousAnalysisTimerRef = useRef<number | null>(null);
+  const interventionPreviewRef = useRef<InterventionPreview | null>(null);
+  const interventionShownAtRef = useRef<number | null>(null);
+  const interventionExpiryTimerRef = useRef<number | null>(null);
 
   // Auto-scroll helper - currently disabled
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -145,7 +220,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
           sessionId: sessionId,
           role: message.role,
           content: message.content,
-          model: message.modelSlug || null
+          model: message.modelSlug || null,
+          isGuidance: !!message.isGuidance,
         }),
       });
     } catch (error) {
@@ -163,7 +239,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
           role: msg.role,
           content: msg.content,
           timestamp: new Date(msg.timestamp),
-          modelSlug: msg.modelSlug
+          modelSlug: msg.modelSlug,
+          isGuidance: !!msg.isGuidance
         }));
 
         // Sort messages by timestamp to ensure proper conversation order
@@ -199,7 +276,113 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
-  const handleSend = async (contextMessageId?: string, customPrompt?: string, hideUserPrompt?: boolean) => {
+  const clearInterventionExpiryTimer = useCallback(() => {
+    if (interventionExpiryTimerRef.current !== null) {
+      window.clearTimeout(interventionExpiryTimerRef.current);
+      interventionExpiryTimerRef.current = null;
+    }
+  }, []);
+
+  const logGuidanceRemoval = useCallback((
+    intervention: InterventionPreview,
+    reason: 'expired' | 'replaced',
+    replacementId?: string
+  ) => {
+    const shownAt = interventionShownAtRef.current;
+    logger.logEvent({
+      eventType: 'ui',
+      action: reason === 'expired' ? 'ai_guidance_expired' : 'ai_guidance_replaced',
+      target: { element: 'ai-guidance-banner', section: 'prompting' },
+      metadata: {
+        interventionId: intervention.id,
+        source: intervention.source,
+        reason,
+        ...(replacementId ? { replacementInterventionId: replacementId } : {}),
+        displayedDurationMs: shownAt === null ? null : Date.now() - shownAt,
+      },
+    });
+    void logger.sendBatch();
+  }, [logger]);
+
+  const presentIntervention = useCallback((intervention: InterventionPreview) => {
+    const previous = interventionPreviewRef.current;
+    const isReplacement = previous !== null;
+    if (previous) {
+      clearInterventionExpiryTimer();
+      logGuidanceRemoval(previous, 'replaced', intervention.id);
+    }
+
+    interventionPreviewRef.current = intervention;
+    interventionShownAtRef.current = Date.now();
+    logAiGuidanceToConsole(intervention);
+    // These events are persisted through the existing interaction logging endpoint, whose
+    // timestamps are relative to the session start just like every other UI interaction.
+    logger.logEvent({
+      eventType: 'ui',
+      action: 'ai_guidance_presented',
+      target: { element: 'ai-guidance-banner', section: 'prompting' },
+      metadata: {
+        interventionId: intervention.id,
+        source: intervention.source,
+        suggestionLength: intervention.text.length,
+      },
+    });
+    void logger.sendBatch();
+    setInterventionPreview(intervention);
+    // A replacement is a new, current suggestion. Keying the banner below restarts
+    // this finite animation so it flashes exactly twice without stacking banners.
+    setGuidanceFlashKey((previousKey) => isReplacement ? previousKey + 1 : 0);
+    interventionExpiryTimerRef.current = window.setTimeout(() => {
+      // Ignore an old timer after its notification has been replaced or inserted.
+      if (interventionPreviewRef.current?.id !== intervention.id) return;
+      logGuidanceRemoval(intervention, 'expired');
+      interventionPreviewRef.current = null;
+      interventionShownAtRef.current = null;
+      interventionExpiryTimerRef.current = null;
+      setInterventionPreview(null);
+    }, GUIDANCE_PREVIEW_TIMEOUT_MS);
+  }, [clearInterventionExpiryTimer, logGuidanceRemoval, logger]);
+
+  const insertIntervention = async () => {
+    if (!interventionPreview || insertingIntervention) return;
+    const intervention = interventionPreview;
+    setInsertingIntervention(true);
+    clearInterventionExpiryTimer();
+    interventionPreviewRef.current = null;
+    interventionShownAtRef.current = null;
+    setInterventionPreview(null);
+    logger.logEvent({
+      eventType: 'ui',
+      action: 'ai_guidance_inserted',
+      target: { element: 'guidance-insert-button', section: 'prompting' },
+      metadata: {
+        interventionId: intervention.id,
+        source: intervention.source,
+        suggestionLength: intervention.text.length,
+      },
+    });
+    try {
+      // Flush before saving guidance so the interaction log records the exact choice time.
+      await logger.sendBatch();
+      const guidanceMessage: Message = {
+        id: `guidance-${Date.now()}`,
+        role: 'user',
+        content: intervention.text,
+        timestamp: new Date(),
+        isGuidance: true,
+      };
+      setMessages((previous) => [...previous, guidanceMessage]);
+      await saveChatMessage(guidanceMessage);
+      await handleSend(undefined, intervention.text, true, true);
+    } catch (error) {
+      console.error('Failed to insert AI guidance:', error);
+    } finally {
+      setInsertingIntervention(false);
+    }
+  };
+
+  const handleSend = async (contextMessageId?: string, customPrompt?: string, hideUserPrompt?: boolean, isGuidanceMessage = false) => {
+    if (!promptingEnabled && !isGuidanceMessage) return;
     const messageContent = customPrompt || prompt;
     if (messageContent.trim()) {
       // Find referenced message if contextMessageId is provided
@@ -217,21 +400,25 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
         }
       }
 
-      // Log prompt submission
-      logger.logEvent({
-        eventType: 'ui',
-        action: 'composer_interaction',
-        target: {
-          element: 'send-button',
-          section: 'prompting',
-        },
-        metadata: {
-          promptLength: messageContent.length,
-          isCustomPrompt: !!customPrompt,
-          hasContext: !!contextMessageId,
-          contextMessageId: referencedMessageIndex, // Use sequential index instead of timestamp ID
-        },
-      });
+      if (!isGuidanceMessage) {
+        // The partition closes as soon as the user message is persisted. Flush this
+        // interaction now so the evaluator sees the send behavior in the same turn.
+        logger.logEvent({
+          eventType: 'ui',
+          action: 'composer_interaction',
+          target: {
+            element: 'send-button',
+            section: 'prompting',
+          },
+          metadata: {
+            promptLength: messageContent.length,
+            isCustomPrompt: !!customPrompt,
+            hasContext: !!contextMessageId,
+            contextMessageId: referencedMessageIndex, // Use sequential index instead of timestamp ID
+          },
+        });
+        await logger.sendBatch();
+      }
 
       // Add user message (only if not hidden)
       const userMessage: Message = {
@@ -241,6 +428,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
         timestamp: new Date(),
         referencedMessageId: contextMessageId,
         referencedMessageContent: referencedMessage?.content.substring(0, 200), // Store first 200 chars for preview
+        isGuidance: isGuidanceMessage,
       };
 
       if (!hideUserPrompt) {
@@ -279,6 +467,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
             sessionId: sessionId,
             message: userMessage.content,
             contextMessageId: contextMessageId,
+            skipPipeline: isGuidanceMessage,
             conversationHistory: messages.map(msg => ({
               role: msg.role,
               content: msg.content
@@ -313,7 +502,41 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
                 try {
                   const data = JSON.parse(jsonStr);
 
-                  if (data.error) {
+                  if (data.agentStage) {
+                    // Paper 2 test mode: forward to the debug panel, if one is listening.
+                    logEvaluationAgentStage(data.agentStage as AgentStageEvent);
+                    onAgentStage?.(data.agentStage);
+                  } else if (data.intervention) {
+                    setInsertingIntervention(false);
+                    setMessages((previous) => previous.filter((message) => message.id !== loadingMessageId));
+                    presentIntervention({
+                      id: data.intervention.id,
+                      text: data.intervention.text,
+                      source: 'stream',
+                    });
+                  } else if (data.guidance) {
+                    // Paper 2: Manipulation Controller intervened this turn — insert its
+                    // guidance as a distinct chat bubble, positioned before the assistant's
+                    // reply (which streams in next).
+                    logAiGuidanceToConsole({
+                      id: data.guidance.messageId,
+                      text: data.guidance.text,
+                      source: 'streamed guidance message',
+                    });
+                    setInterventionPreview(null);
+                    const guidanceMessage: Message = {
+                      id: data.guidance.messageId ? `guidance-${data.guidance.messageId}` : `guidance-${Date.now()}`,
+                      role: 'user',
+                      content: data.guidance.text,
+                      timestamp: new Date(),
+                      isGuidance: true,
+                    };
+                    setMessages(prev => {
+                      const idx = prev.findIndex(msg => msg.id === loadingMessageId);
+                      if (idx === -1) return [...prev, guidanceMessage];
+                      return [...prev.slice(0, idx), guidanceMessage, ...prev.slice(idx)];
+                    });
+                  } else if (data.error) {
                     // Handle error with optional partial content
                     if (data.interrupted && data.partialContent) {
                       console.warn('[Frontend] Stream was interrupted, displaying partial content:', data.partialContent.length, 'chars');
@@ -393,7 +616,101 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
     }
   };
 
+  const requestAutomaticAnalysis = useCallback(async (trigger: 'silence' | 'word_threshold' | 'continuous_speech') => {
+    if (analysisInFlightRef.current) return;
+    const availableTranscriptCount = availableTranscriptCountRef.current;
+    if (availableTranscriptCount <= lastAutomaticAnalysisTranscriptCountRef.current) return;
+    // Mark this completed-transcript set as attempted before the request. A server error
+    // cannot then create a two-second retry loop while the participant remains silent.
+    lastAutomaticAnalysisTranscriptCountRef.current = availableTranscriptCount;
+    analysisInFlightRef.current = true;
+    onAgentStage?.({
+      agent: 'evaluation_agent',
+      status: 'started',
+      detail: `automatic trigger: ${trigger}`,
+      timestamp: Date.now(),
+    });
+    logEvaluationAgentStage({
+      agent: 'evaluation_agent',
+      status: 'started',
+      detail: `automatic trigger: ${trigger}`,
+      timestamp: Date.now(),
+    });
+    try {
+      await logger.sendBatch();
+      const response = await fetch('/api/chat/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, trigger }),
+      });
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => ({}));
+        throw new Error(errorBody.error || `Automatic analysis failed (${response.status})`);
+      }
+      const data = await response.json();
+      (data.stages ?? [])
+        .filter((stage: AgentStageEvent) => !(stage.agent === 'evaluation_agent' && stage.status === 'started'))
+        .forEach((stage: AgentStageEvent) => {
+          logEvaluationAgentStage(stage);
+          onAgentStage?.(stage);
+        });
+      if (data.ran) {
+        wordsSinceAnalysisRef.current = 0;
+        continuousSpeechStartedAtRef.current = null;
+        if (continuousAnalysisTimerRef.current !== null) {
+          window.clearTimeout(continuousAnalysisTimerRef.current);
+          continuousAnalysisTimerRef.current = null;
+        }
+      }
+      if (data.intervention) {
+        presentIntervention({ ...data.intervention, source: 'automatic' });
+      }
+    } catch (error) {
+      console.error('Automatic manipulation analysis failed:', error);
+      const errorStage: AgentStageEvent = {
+        agent: 'evaluation_agent',
+        status: 'error',
+        detail: error instanceof Error ? error.message : 'automatic analysis failed',
+        timestamp: Date.now(),
+      };
+      logEvaluationAgentStage(errorStage);
+      onAgentStage?.(errorStage);
+    } finally {
+      analysisInFlightRef.current = false;
+    }
+  }, [logger, onAgentStage, presentIntervention, sessionId]);
+
+  useEffect(() => {
+    if (transcriptChunks.length <= analyzedTranscriptCountRef.current) return;
+    const newChunks = transcriptChunks.slice(analyzedTranscriptCountRef.current);
+    analyzedTranscriptCountRef.current = transcriptChunks.length;
+    availableTranscriptCountRef.current = transcriptChunks.length;
+    wordsSinceAnalysisRef.current += newChunks.join(' ').trim().split(/\s+/).filter(Boolean).length;
+    if (continuousSpeechStartedAtRef.current === null) {
+      continuousSpeechStartedAtRef.current = Date.now();
+      continuousAnalysisTimerRef.current = window.setTimeout(() => requestAutomaticAnalysis('continuous_speech'), 45_000);
+    }
+    if (wordsSinceAnalysisRef.current >= 60) requestAutomaticAnalysis('word_threshold');
+  }, [requestAutomaticAnalysis, transcriptChunks]);
+
+  useEffect(() => {
+    if (!speechActivityAt) return;
+    if (availableTranscriptCountRef.current <= lastAutomaticAnalysisTranscriptCountRef.current) return;
+    if (idleAnalysisTimerRef.current !== null) window.clearTimeout(idleAnalysisTimerRef.current);
+    const remainingSilenceMs = Math.max(0, speechActivityAt + 2_000 - Date.now());
+    idleAnalysisTimerRef.current = window.setTimeout(() => requestAutomaticAnalysis('silence'), remainingSilenceMs);
+    return () => {
+      if (idleAnalysisTimerRef.current !== null) window.clearTimeout(idleAnalysisTimerRef.current);
+    };
+  }, [requestAutomaticAnalysis, speechActivityAt, transcriptChunks.length]);
+
+  useEffect(() => () => {
+    if (continuousAnalysisTimerRef.current !== null) window.clearTimeout(continuousAnalysisTimerRef.current);
+    clearInterventionExpiryTimer();
+  }, [clearInterventionExpiryTimer]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (!promptingEnabled) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -633,14 +950,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
     );
   };
 
-  // Memoized markdown renderer to prevent re-renders that clear selection
-  const MemoizedMarkdown = memo(({ content }: { content: string }) => (
-    <ReactMarkdown>{content}</ReactMarkdown>
-  ));
-  MemoizedMarkdown.displayName = 'MemoizedMarkdown';
-
-  const MessageBubble: React.FC<{ message: Message; turnIndex: number; messageIndex: number }> = memo(({ message, turnIndex, messageIndex }) => (
+  // Keep this as a render helper rather than a component declared during every
+  // parent render.  A new component identity would remount every message and
+  // reset the browser's drag-selection anchor to the beginning of the thread.
+  const renderMessageBubble = (message: Message, turnIndex: number, messageIndex: number, messagePromptingEnabled: boolean) => (
     <article
+      key={message.id}
       className="text-token-text-primary group"
       data-turn-id={message.id}
       data-message-index={messageIndex}
@@ -665,6 +980,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
             <div
               data-message-author-role={message.role}
               data-message-id={message.id}
+              data-ai-response-content={message.role === 'assistant' ? 'true' : undefined}
               style={{
                 minHeight: '2rem',
                 position: 'relative',
@@ -677,7 +993,39 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
                 whiteSpace: 'normal'
               }}
             >
-              {message.role === 'user' ? (
+              {message.isGuidance ? (
+                /* Paper 2: AI guidance — distinct pale-green bubble with label,
+                   centered rather than right-aligned like a normal user bubble, so it visibly stands apart. */
+                <div style={{ display: 'flex', width: '100%', justifyContent: 'center' }}>
+                  <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.375rem',
+                    width: '100%',
+                    maxWidth: '85%',
+                    backgroundColor: '#ecfdf5',
+                    border: '1px solid #a7f3d0',
+                    borderRadius: '12px',
+                    padding: '0.75rem 1rem'
+                  }}>
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.375rem',
+                      fontSize: '0.6875rem',
+                      fontWeight: 700,
+                      color: '#047857',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.04em'
+                    }}>
+                      <span>AI guidance</span>
+                    </div>
+                    <div style={{ whiteSpace: 'pre-wrap', color: '#065f46', fontSize: '0.9375rem', lineHeight: '1.5' }}>
+                      {message.content}
+                    </div>
+                  </div>
+                </div>
+              ) : message.role === 'user' ? (
                 /* User Message */
                 <div style={{ display: 'flex', width: '100%', flexDirection: 'column', gap: '0.25rem', alignItems: 'flex-end' }}>
                   {/* Reference preview - Show if this message references another */}
@@ -734,8 +1082,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
                         msUserSelect: 'text'
                       }}
                     >
-                      {/* Always show markdown, whether streaming or not */}
-                      <MemoizedMarkdown content={message.content} />
+                      {/* During streaming, retain one text node so incremental chunks do not
+                          replace the DOM subtree underneath a user's text selection. */}
+                      {message.isLoading ? (
+                        <div style={{ whiteSpace: 'pre-wrap' }}>{message.content}</div>
+                      ) : (
+                        <MemoizedMarkdown content={message.content} />
+                      )}
                       {/* Show cursor indicator while streaming */}
                       {message.isLoading && (
                         <span style={{
@@ -910,7 +1263,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
                 )}
 
                 {/* Regenerate Button - Now toggles expanded section */}
-                <button
+                {messagePromptingEnabled && <button
                   onClick={() => {
                     const isExpanding = expandedMessageId !== message.id;
                     logger.logEvent({
@@ -955,30 +1308,19 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
                     <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
                     <path d="M3 21v-5h5"/>
                   </svg>
-                </button>
+                </button>}
               </div>
             </div>
           )}
 
           {/* Expanded Section - Show below action buttons */}
-          {expandedMessageId === message.id && (
+          {messagePromptingEnabled && expandedMessageId === message.id && (
             <ExpandedSection messageId={message.id} messageIndex={messageIndex} />
           )}
         </div>
       </div>
     </article>
-  ), (prevProps, nextProps) => {
-    // Custom comparison: only re-render if message content, isLoading, or feedbackType changes
-    return (
-      prevProps.message.id === nextProps.message.id &&
-      prevProps.message.content === nextProps.message.content &&
-      prevProps.message.isLoading === nextProps.message.isLoading &&
-      prevProps.message.feedbackType === nextProps.message.feedbackType &&
-      prevProps.turnIndex === nextProps.turnIndex &&
-      prevProps.messageIndex === nextProps.messageIndex
-    );
-  });
-  MessageBubble.displayName = 'MessageBubble';
+  );
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', padding: '1rem' }}>
@@ -986,9 +1328,58 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
         LLM Chat Interface
       </h2>
 
+      {interventionPreview && (
+        <div
+          key={interventionPreview.id}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '0.75rem',
+            marginBottom: '0.75rem',
+            padding: '0.625rem 0.75rem',
+            backgroundColor: '#ecfdf5',
+            border: '1px solid #6ee7b7',
+            borderRadius: '0.5rem',
+            color: '#065f46',
+            fontSize: '0.8125rem',
+            animation: guidanceFlashKey > 0 ? 'guidance-notification-flash 450ms ease-in-out 2' : undefined,
+          }}
+          role="status"
+        >
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 700 }}>There is guidance from the AI.</div>
+            <div style={{ marginTop: '0.125rem', color: '#047857' }}>
+              {insertingIntervention
+                ? 'Inserting guidance...'
+                : 'Select Insert to follow the guidance in the discussion.'}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={insertIntervention}
+            disabled={insertingIntervention}
+            style={{
+              flexShrink: 0,
+              padding: '0.375rem 0.75rem',
+              border: '1px solid #059669',
+              borderRadius: '0.375rem',
+              backgroundColor: insertingIntervention ? '#d1fae5' : '#059669',
+              color: insertingIntervention ? '#065f46' : 'white',
+              fontSize: '0.8125rem',
+              fontWeight: 600,
+              cursor: insertingIntervention ? 'wait' : 'pointer',
+            }}
+          >
+            {insertingIntervention ? 'Inserting...' : 'Insert'}
+          </button>
+        </div>
+      )}
+
       {/* Chat Messages Area */}
       <div
         ref={messagesContainerRef}
+        data-interaction-section="response"
         style={{
           flex: '1',
           overflowY: 'auto',
@@ -1015,9 +1406,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
               </p>
             </div>
           ) : (
-            messages.map((message, index) => (
-              <MessageBubble key={message.id} message={message} turnIndex={index + 1} messageIndex={index + 1} />
-            ))
+            messages.map((message, index) => renderMessageBubble(message, index + 1, index + 1, promptingEnabled))
           )}
           {/* Scroll anchor */}
           <div ref={messagesEndRef} />
@@ -1025,7 +1414,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
       </div>
 
       {/* Composer Interface */}
-      <form
+      {promptingEnabled ? <form
         style={{ width: '100%' }}
         data-type="unified-composer"
         onSubmit={(e) => { e.preventDefault(); handleSend(); }}
@@ -1096,7 +1485,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
             </button>
           </div>
         </div>
-      </form>
+      </form> : (
+        <div style={{
+          padding: '0.75rem 1rem',
+          borderRadius: '0.75rem',
+          backgroundColor: '#f3f4f6',
+          color: '#4b5563',
+          fontSize: '0.875rem',
+          textAlign: 'center'
+        }}>
+          You are now in the writing phase. Direct prompts to the AI are unavailable, but AI guidance may still appear here.
+        </div>
+      )}
     </div>
   );
 };

@@ -13,8 +13,17 @@ interface WritingSectionProps {
   isPracticeMode?: boolean;
   elapsedTime?: number; // in seconds (for practice mode)
   elapsedTimeRef?: React.RefObject<number>; // ref for actual mode (avoids re-renders)
+  minimumTimeMet?: boolean; // Reactive actual-mode signal so the submit button unlocks exactly at 10 minutes
+  writingMinimumTimeMet?: boolean; // Low-TF Phase 2 requires four active writing minutes before submission
   taskDescription?: string; // e.g., "Toy" or "Adult Learning Platform"
   showForcedSubmission?: boolean; // Show forced submission popup at 25 minutes
+  showSubmissionExtension?: boolean;
+  onRequestExtraTime?: () => void;
+  onTimerPauseChange?: (paused: boolean) => void;
+  locked?: boolean; // Paper 2 Low-TF Phase 1 ("collect"): writing area is locked until the participant advances phase
+  canAdvanceToWriting?: boolean;
+  onAdvanceToWriting?: () => void;
+  advancingToWriting?: boolean;
 }
 
 const WritingSection: React.FC<WritingSectionProps> = ({
@@ -26,8 +35,17 @@ const WritingSection: React.FC<WritingSectionProps> = ({
   isPracticeMode = false,
   elapsedTime = 0,
   elapsedTimeRef,
+  minimumTimeMet = false,
+  writingMinimumTimeMet = true,
   taskDescription,
-  showForcedSubmission = false
+  showForcedSubmission = false,
+  showSubmissionExtension = false,
+  onRequestExtraTime,
+  onTimerPauseChange,
+  locked = false,
+  canAdvanceToWriting = false,
+  onAdvanceToWriting,
+  advancingToWriting = false
 }) => {
   // Get elapsed time from either prop or ref
   const getElapsedTime = () => {
@@ -42,6 +60,14 @@ const WritingSection: React.FC<WritingSectionProps> = ({
   const [showTimeWarning, setShowTimeWarning] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Submission confirmations are part of the timed task flow. Let the parent freeze
+  // its shared experiment timer while either local confirmation is visible.
+  useEffect(() => {
+    onTimerPauseChange?.(showSubmitConfirm || showTimeWarning);
+  }, [onTimerPauseChange, showSubmitConfirm, showTimeWarning]);
+
+  useEffect(() => () => onTimerPauseChange?.(false), [onTimerPauseChange]);
 
   // Update counts when content changes
   useEffect(() => {
@@ -117,6 +143,9 @@ const WritingSection: React.FC<WritingSectionProps> = ({
         charCount,
       },
     });
+    // The submission endpoint exports interaction_logs immediately. Persist this
+    // final click first so the exported CSV contains the submission boundary.
+    await logger.sendBatch();
 
     try {
       // Get audio data from transcript component
@@ -229,6 +258,9 @@ const WritingSection: React.FC<WritingSectionProps> = ({
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  const hasMetMinimumTime = isPracticeMode || minimumTimeMet || getElapsedTime() >= 10 * 60;
+  const canSubmit = Boolean(content.trim()) && hasMetMinimumTime && writingMinimumTimeMet;
+
   return (
     <>
       <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -245,6 +277,7 @@ const WritingSection: React.FC<WritingSectionProps> = ({
           </div>
           <button
             onClick={clearContent}
+            disabled={locked}
             style={{
               padding: '0.25rem 0.75rem',
               fontSize: '0.875rem',
@@ -252,23 +285,72 @@ const WritingSection: React.FC<WritingSectionProps> = ({
               color: '#6b7280',
               border: 'none',
               borderRadius: '0.25rem',
-              cursor: 'pointer',
+              cursor: locked ? 'not-allowed' : 'pointer',
+              opacity: locked ? 0.5 : 1,
               transition: 'background-color 0.2s'
             }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#e5e7eb'}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+            onMouseEnter={(e) => { if (!locked) e.currentTarget.style.backgroundColor = '#e5e7eb'; }}
+            onMouseLeave={(e) => { if (!locked) e.currentTarget.style.backgroundColor = '#f3f4f6'; }}
           >
             Clear
           </button>
         </div>
 
         {/* Writing Area - You can change minHeight here (e.g., '400px', '500px') */}
-        <div style={{ marginBottom: '0.75rem', overflow: 'hidden' }}>
+        <div style={{ marginBottom: '0.75rem', overflow: 'hidden', position: 'relative' }}>
+          {locked && (
+            <div style={{
+              position: 'absolute',
+              inset: 0,
+              zIndex: 10,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.5rem',
+              backgroundColor: 'rgba(249, 250, 251, 0.92)',
+              border: '1px dashed #d1d5db',
+              borderRadius: '0.5rem',
+              textAlign: 'center',
+              padding: '1rem'
+            }}>
+              <span style={{ fontSize: '1.5rem' }} role="img" aria-label="locked">🔒</span>
+              <p style={{ fontSize: '0.875rem', fontWeight: 500, color: '#374151', margin: 0 }}>
+                Writing opens up in the next phase
+              </p>
+              <p style={{ fontSize: '0.8125rem', color: '#6b7280', margin: 0, maxWidth: '26rem' }}>
+                {onAdvanceToWriting
+                  ? "Keep exploring ideas with the chatbot for now. The Next button is disabled now and will be enabled 5 minutes after the main task begins. When you finish the exploration with AI chatbot, click 'Next' to unlock this area."
+                  : 'Keep exploring ideas with the chatbot for now. The writing area will unlock when the exploration phase ends.'}
+              </p>
+              {onAdvanceToWriting && (
+                <button
+                  type="button"
+                  onClick={onAdvanceToWriting}
+                  disabled={!canAdvanceToWriting || advancingToWriting}
+                  style={{
+                    marginTop: '0.5rem',
+                    padding: '0.375rem 1rem',
+                    fontSize: '0.875rem',
+                    fontWeight: 500,
+                    backgroundColor: canAdvanceToWriting && !advancingToWriting ? '#f59e0b' : '#e5e7eb',
+                    color: canAdvanceToWriting && !advancingToWriting ? 'white' : '#9ca3af',
+                    border: 'none',
+                    borderRadius: '0.375rem',
+                    cursor: canAdvanceToWriting && !advancingToWriting ? 'pointer' : 'not-allowed'
+                  }}
+                >
+                  {advancingToWriting ? 'Moving on...' : 'Next: Move to writing →'}
+                </button>
+              )}
+            </div>
+          )}
           <textarea
             ref={textareaRef}
             data-testid="writing-textarea"
             value={content}
             onChange={(e) => setContent(e.target.value)}
+            disabled={locked}
             placeholder="Combine your insights here. Write your final thoughts, conclusions, or answers..."
             style={{
               width: '100%',
@@ -323,8 +405,8 @@ const WritingSection: React.FC<WritingSectionProps> = ({
           />
         </div>
 
-        {/* Bottom Section - Status Bar and Submission */}
-        <div>
+        {/* Bottom Section - Status Bar and Submission (shown only once writing is unlocked) */}
+        {!locked && <div>
           {/* Status Bar */}
           <div style={{ marginBottom: '0.75rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '1rem' }} className="text-token-text-secondary">
             <span>Words: {wordCount}</span>
@@ -358,19 +440,23 @@ const WritingSection: React.FC<WritingSectionProps> = ({
                 <li>This action cannot be undone</li>
                 <li>Make sure you've completed your thoughts</li>
               </ul>
+              {!isPracticeMode && !hasMetMinimumTime && (
+                <p style={{ fontSize: '0.75rem', marginTop: '0.5rem', color: '#92400e' }}>
+                  Submission becomes available 10 minutes after the main task begins.
+                </p>
+              )}
+              {!isPracticeMode && hasMetMinimumTime && !writingMinimumTimeMet && (
+                <p style={{ fontSize: '0.75rem', marginTop: '0.5rem', color: '#92400e' }}>
+                  Submission becomes available after you have spent 4 minutes in the writing phase.
+                </p>
+              )}
             </div>
 
             <button
               onClick={() => {
-                // Check 10-minute minimum for actual task
-                const currentElapsedTime = getElapsedTime();
-                if (!isPracticeMode && currentElapsedTime < 600) {
-                  setShowTimeWarning(true);
-                  return;
-                }
                 setShowSubmitConfirm(true);
               }}
-              disabled={!content.trim() || isPracticeMode}
+              disabled={!canSubmit || isPracticeMode}
               style={{
                 display: isPracticeMode ? 'none' : 'block',
                 width: '100%',
@@ -378,18 +464,18 @@ const WritingSection: React.FC<WritingSectionProps> = ({
                 borderRadius: '0.5rem',
                 fontWeight: '500',
                 border: 'none',
-                cursor: content.trim() ? 'pointer' : 'not-allowed',
-                backgroundColor: content.trim() ? '#22c55e' : '#e5e7eb',
-                color: content.trim() ? 'white' : '#9ca3af',
+                cursor: canSubmit ? 'pointer' : 'not-allowed',
+                backgroundColor: canSubmit ? '#22c55e' : '#e5e7eb',
+                color: canSubmit ? 'white' : '#9ca3af',
                 transition: 'background-color 0.2s'
               }}
               onMouseEnter={(e) => {
-                if (content.trim()) {
+                if (canSubmit) {
                   e.currentTarget.style.backgroundColor = '#16a34a';
                 }
               }}
               onMouseLeave={(e) => {
-                if (content.trim()) {
+                if (canSubmit) {
                   e.currentTarget.style.backgroundColor = '#22c55e';
                 }
               }}
@@ -397,7 +483,7 @@ const WritingSection: React.FC<WritingSectionProps> = ({
               Submit Final Work
             </button>
           </div>
-        </div>
+        </div>}
       </div>
 
       {/* Confirmation Modal */}
@@ -589,6 +675,47 @@ const WritingSection: React.FC<WritingSectionProps> = ({
       )}
 
       {/* Forced Submission Modal (25 minutes - no cancel button) */}
+      {showSubmissionExtension && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999
+        }}>
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '0.5rem',
+            padding: '1.5rem',
+            maxWidth: '28rem',
+            width: '100%',
+            margin: '0 1rem'
+          }}>
+            <h3 style={{ fontSize: '1.125rem', fontWeight: '600', marginBottom: '1rem' }}>Ready to Submit?</h3>
+            <p style={{ fontSize: '0.875rem', color: '#4b5563', lineHeight: 1.5, marginBottom: '1.5rem' }}>
+              The scheduled task time has ended. You may submit your work now, or take two more minutes to finish your proposal.
+            </p>
+            <div style={{ display: 'flex', gap: '0.75rem' }}>
+              <button
+                onClick={handleSubmit}
+                style={{ flex: 1, padding: '0.5rem 0.75rem', backgroundColor: '#22c55e', color: 'white', border: 'none', borderRadius: '0.375rem', cursor: 'pointer', fontWeight: 500 }}
+              >
+                Submit Final Work
+              </button>
+              <button
+                onClick={onRequestExtraTime}
+                style={{ flex: 1, padding: '0.5rem 0.75rem', backgroundColor: '#f59e0b', color: 'white', border: 'none', borderRadius: '0.375rem', cursor: 'pointer', fontWeight: 500 }}
+              >
+                Two More Minutes to Wrap Up
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Forced Submission Modal (time limit - no cancel button) */}
       {showForcedSubmission && (
         <div style={{
           position: 'fixed',

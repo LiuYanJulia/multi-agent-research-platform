@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { isPracticeSession } from '../utils/sessionUtils';
+import { buildSessionTimeline } from '../services/eventTimelineBuilder';
 
 const router = express.Router();
 
@@ -43,7 +44,7 @@ router.post('/batch', async (req, res) => {
         if ((existingSessions as any[]).length === 0) {
           console.log(`[Logging] Session ${sessionId} not found, creating it...`);
           await db.execute(
-            'INSERT INTO sessions (id, user_id, status) VALUES (?, ?, ?)',
+            'INSERT INTO sessions (id, participant_id, status) VALUES (?, ?, ?)',
             [sessionId, 'auto-created', 'active']
           );
         }
@@ -84,6 +85,14 @@ router.post('/batch', async (req, res) => {
         console.error('Database insert error:', dbError.message);
         console.error('Sample log entry:', logs[0]);
         throw dbError;
+      }
+
+      if (db) {
+        try {
+          await buildSessionTimeline(db, sessionId);
+        } catch (timelineError) {
+          console.error('Failed to refresh session event timeline:', timelineError);
+        }
       }
     }
 
@@ -126,7 +135,7 @@ router.post('/single', async (req, res) => {
         if ((existingSessions as any[]).length === 0) {
           console.log(`[Logging] Session ${sessionId} not found, creating it...`);
           await db.execute(
-            'INSERT INTO sessions (id, user_id, status) VALUES (?, ?, ?)',
+            'INSERT INTO sessions (id, participant_id, status) VALUES (?, ?, ?)',
             [sessionId, 'auto-created', 'active']
           );
         }
