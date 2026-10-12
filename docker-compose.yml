@@ -11,8 +11,6 @@ services:
       MYSQL_DATABASE: research_platform
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-    ports:
-      - "3306:3306"
     volumes:
       - db-data:/var/lib/mysql
       - ./backend/database/schema.sql:/docker-entrypoint-initdb.d/schema.sql
@@ -38,12 +36,11 @@ services:
       DB_USER: ${MYSQL_USER}
       DB_PASSWORD: ${MYSQL_PASSWORD}
       DB_NAME: research_platform
+      FRONTEND_URL: ${FRONTEND_URL}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
       OPENAI_REALTIME_MODEL: ${OPENAI_REALTIME_MODEL:-gpt-live-transcribe}
       OPENAI_REALTIME_URL: ${OPENAI_REALTIME_URL:-wss://api.openai.com/v1/realtime}
-    ports:
-      - "3001:3001"
     volumes:
       - ./backend/uploads:/app/uploads
     depends_on:
