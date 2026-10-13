@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { isPracticeSession } from '../utils/sessionUtils';
 import { buildSessionTimeline } from '../services/eventTimelineBuilder';
+import { inspectSessionMetadata, sessionMetadataDiagnostic } from '../services/sessionMetadataDiagnostics';
 
 const router = express.Router();
 
@@ -43,10 +44,23 @@ router.post('/batch', async (req, res) => {
 
         if ((existingSessions as any[]).length === 0) {
           console.log(`[Logging] Session ${sessionId} not found, creating it...`);
-          await db.execute(
+          sessionMetadataDiagnostic({
+            stage: 'auto_create_before',
+            source: 'interaction_log_batch',
+            sessionId,
+            metadata: await inspectSessionMetadata(db, sessionId),
+          });
+          const [autoCreateResult] = await db.execute(
             'INSERT INTO sessions (id, participant_id, status) VALUES (?, ?, ?)',
             [sessionId, 'auto-created', 'active']
           );
+          sessionMetadataDiagnostic({
+            stage: 'auto_create_after',
+            source: 'interaction_log_batch',
+            sessionId,
+            result: autoCreateResult,
+            metadata: await inspectSessionMetadata(db, sessionId),
+          });
         }
       } catch (sessionError) {
         console.error('[Logging] Error checking/creating session:', sessionError);
@@ -134,10 +148,23 @@ router.post('/single', async (req, res) => {
 
         if ((existingSessions as any[]).length === 0) {
           console.log(`[Logging] Session ${sessionId} not found, creating it...`);
-          await db.execute(
+          sessionMetadataDiagnostic({
+            stage: 'auto_create_before',
+            source: 'interaction_log_single',
+            sessionId,
+            metadata: await inspectSessionMetadata(db, sessionId),
+          });
+          const [autoCreateResult] = await db.execute(
             'INSERT INTO sessions (id, participant_id, status) VALUES (?, ?, ?)',
             [sessionId, 'auto-created', 'active']
           );
+          sessionMetadataDiagnostic({
+            stage: 'auto_create_after',
+            source: 'interaction_log_single',
+            sessionId,
+            result: autoCreateResult,
+            metadata: await inspectSessionMetadata(db, sessionId),
+          });
         }
       } catch (sessionError) {
         console.error('[Logging] Error checking/creating session:', sessionError);

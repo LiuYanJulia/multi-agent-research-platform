@@ -121,7 +121,15 @@ const WebRTCTranscript = forwardRef<WebRTCTranscriptRef, WebRTCTranscriptProps>(
     fetch('/api/transcript/segments/batch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, segments: batch }),
+      // Persist this clock anchor with the batch. Segment timestamps themselves
+      // are absolute epoch milliseconds, but the anchor documents and supports
+      // correct conversion of any relative-time fallback rows when microphone
+      // recording began after the task session.
+      body: JSON.stringify({
+        sessionId,
+        segments: batch,
+        recordingStartEpochMs: recordingStartTimeRef.current || null,
+      }),
     }).catch((err) => {
       console.error(`${sessionLabel} Failed to upload speech segments:`, err);
     });

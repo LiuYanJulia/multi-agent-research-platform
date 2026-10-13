@@ -6,6 +6,11 @@ import fs from 'fs';
 import path from 'path';
 import WebSocket from 'ws';
 import { buildSessionTimeline } from '../services/eventTimelineBuilder';
+import {
+  inspectSessionMetadata,
+  sessionMetadataDiagnostic,
+  sessionMetadataErrorSummary,
+} from '../services/sessionMetadataDiagnostics';
 
 // Extend Request type to include file
 interface MulterRequest extends Request {
@@ -14,6 +19,58 @@ interface MulterRequest extends Request {
 }
 
 const router = express.Router();
+
+// LOCAL DIAGNOSTICS ONLY — set TIMELINE_DIAGNOSTICS=false before pushing/deploying.
+// Read at request time because dotenv is initialized after route modules load.
+function timelineDiagnosticsEnabled(): boolean {
+  return process.env.TIMELINE_DIAGNOSTICS === 'true';
+}
+
+function diagnosticErrorSummary(error: unknown): Record<string, unknown> {
+  if (!(error instanceof Error)) return { value: String(error) };
+  const mysqlError = error as Error & { code?: unknown; errno?: unknown; sqlState?: unknown; sqlMessage?: unknown };
+  return {
+    name: mysqlError.name,
+    message: mysqlError.message,
+    code: mysqlError.code,
+    errno: mysqlError.errno,
+    sqlState: mysqlError.sqlState,
+    sqlMessage: mysqlError.sqlMessage,
+  };
+}
+
+function transcriptDiagnostic(payload: Record<string, unknown>): void {
+  if (!timelineDiagnosticsEnabled()) return;
+  // Deliberately omit transcription, chat, interaction text, and full metadata.
+  console.info('[TRANSCRIPT_DIAGNOSTIC]', JSON.stringify({ at: new Date().toISOString(), ...payload }));
+}
+
+function speechBatchSummary(segments: unknown[]): Record<string, unknown> {
+  const starts: number[] = [];
+  const ends: number[] = [];
+  let transcriptCharTotal = 0;
+  let transcriptCharMaximum = 0;
+  for (const segment of segments as any[]) {
+    const start = Number(segment?.timestampStart);
+    const end = Number(segment?.timestampEnd);
+    if (Number.isFinite(start)) starts.push(start);
+    if (Number.isFinite(end)) ends.push(end);
+    const length = typeof segment?.transcription === 'string' ? segment.transcription.length : 0;
+    transcriptCharTotal += length;
+    transcriptCharMaximum = Math.max(transcriptCharMaximum, length);
+  }
+  return {
+    segmentCount: segments.length,
+    timestampStartMinimum: starts.length ? Math.min(...starts) : null,
+    timestampEndMaximum: ends.length ? Math.max(...ends) : null,
+    transcriptCharTotal,
+    transcriptCharMaximum,
+  };
+}
+
+async function sessionMetadataSummary(db: any, sessionId: string): Promise<Record<string, unknown>> {
+  return inspectSessionMetadata(db, sessionId);
+}
 
 // Lazy initialize OpenAI client to ensure .env is loaded
 function getOpenAI() {
@@ -219,9 +276,22 @@ router.post('/realtime-stop', (req, res) => {
 // merging speech into the unified event timeline - e.g. by adding sessionStartTime to a relative
 // value, or subtracting it from an absolute one - rather than assuming they're already aligned.
 router.post('/segments/batch', async (req: MulterRequest, res) => {
+  const traceId = `speech-${Date.now()}-${uuidv4().slice(0, 8)}`;
   try {
-    const { sessionId, segments } = req.body;
+    const { sessionId, segments, recordingStartEpochMs } = req.body;
     const db = req.db;
+
+    transcriptDiagnostic({
+      traceId,
+      stage: 'request_received',
+      sessionId: typeof sessionId === 'string' ? sessionId : null,
+      contentLength: req.headers['content-length'] ?? null,
+      recordingStartType: typeof recordingStartEpochMs,
+      recordingStartStringLength: typeof recordingStartEpochMs === 'string' ? recordingStartEpochMs.length : null,
+      recordingStartIsFinite: Number.isFinite(Number(recordingStartEpochMs)),
+      recordingStartNumeric: Number.isFinite(Number(recordingStartEpochMs)) ? Number(recordingStartEpochMs) : null,
+      ...(Array.isArray(segments) ? speechBatchSummary(segments) : { segmentCount: null }),
+    });
 
     if (!sessionId || !Array.isArray(segments)) {
       return res.status(400).json({ error: 'sessionId and segments array are required' });
@@ -240,14 +310,92 @@ router.post('/segments/batch', async (req: MulterRequest, res) => {
       const [existingSessions] = await db.execute('SELECT id FROM sessions WHERE id = ?', [sessionId]);
       if ((existingSessions as any[]).length === 0) {
         console.log(`[Transcript] Session ${sessionId} not found, creating it...`);
-        await db.execute(
+        sessionMetadataDiagnostic({
+          traceId,
+          stage: 'auto_create_before',
+          source: 'transcript_batch',
+          sessionId,
+          metadata: await sessionMetadataSummary(db, sessionId),
+        });
+        const [autoCreateResult] = await db.execute(
           'INSERT INTO sessions (id, participant_id, status) VALUES (?, ?, ?)',
           [sessionId, 'auto-created', 'active']
         );
+        sessionMetadataDiagnostic({
+          traceId,
+          stage: 'auto_create_after',
+          source: 'transcript_batch',
+          sessionId,
+          result: autoCreateResult,
+          metadata: await sessionMetadataSummary(db, sessionId),
+        });
       }
     } catch (sessionError) {
       console.error('[Transcript] Error checking/creating session:', sessionError);
       // Continue anyway - will fail on the foreign key below if there's a real issue.
+    }
+
+    // interaction_logs and chat history are anchored to the task's session
+    // clock. Speech rows are already sent as absolute epoch times, and this
+    // additional anchor records the (often later) microphone-start offset for
+    // auditability and for legacy relative-timestamp conversion in the timeline
+    // materializer. Persist only a missing or malformed value. In particular,
+    // never pass JSON_EXTRACT(existing value) back through JSON_SET: MySQL can
+    // treat that JSON value as a string and add another escaping layer on every
+    // speech batch, causing exponential metadata growth.
+    const recordingStart = Number(recordingStartEpochMs);
+    if (Number.isFinite(recordingStart) && recordingStart > 0) {
+      const metadataBefore = await sessionMetadataSummary(db, sessionId);
+      transcriptDiagnostic({ traceId, stage: 'before_recording_anchor_update', sessionId, metadata: metadataBefore });
+      sessionMetadataDiagnostic({
+        traceId,
+        stage: 'recording_anchor_write_before',
+        sessionId,
+        operation: 'JSON_SET write request anchor only when the stored value is missing or non-integer',
+        requestedRecordingStartEpochMs: recordingStart,
+        metadata: metadataBefore,
+      });
+      try {
+        const [anchorUpdateResult] = await db.execute(
+          `UPDATE sessions
+           SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.recordingStartEpochMs', CAST(? AS UNSIGNED))
+           WHERE id = ?
+             AND (
+               JSON_CONTAINS_PATH(COALESCE(metadata, JSON_OBJECT()), 'one', '$.recordingStartEpochMs') = 0
+               OR JSON_TYPE(JSON_EXTRACT(metadata, '$.recordingStartEpochMs')) <> 'INTEGER'
+             )`,
+          [recordingStart, sessionId]
+        );
+        const metadataAfter = await sessionMetadataSummary(db, sessionId);
+        transcriptDiagnostic({ traceId, stage: 'recording_anchor_updated', sessionId, metadata: metadataAfter });
+        sessionMetadataDiagnostic({
+          traceId,
+          stage: 'recording_anchor_write_after',
+          sessionId,
+          operation: 'JSON_SET write request anchor only when the stored value is missing or non-integer',
+          requestedRecordingStartEpochMs: recordingStart,
+          result: anchorUpdateResult,
+          metadata: metadataAfter,
+        });
+      } catch (anchorError) {
+        transcriptDiagnostic({
+          traceId,
+          stage: 'recording_anchor_update_failed',
+          sessionId,
+          recordingStart,
+          metadata: await sessionMetadataSummary(db, sessionId),
+          error: diagnosticErrorSummary(anchorError),
+        });
+        sessionMetadataDiagnostic({
+          traceId,
+          stage: 'recording_anchor_write_failed',
+          sessionId,
+          requestedRecordingStartEpochMs: recordingStart,
+          metadata: await sessionMetadataSummary(db, sessionId),
+          error: sessionMetadataErrorSummary(anchorError),
+        });
+        throw anchorError;
+      }
     }
 
     const values = segments.map((seg: any) => [
@@ -264,17 +412,18 @@ router.post('/segments/batch', async (req: MulterRequest, res) => {
        VALUES ${placeholders}`,
       flatValues
     );
+    transcriptDiagnostic({ traceId, stage: 'speech_segments_inserted', sessionId, insertedSegmentCount: values.length });
 
     try {
-      await buildSessionTimeline(db, sessionId);
+      await buildSessionTimeline(db, sessionId, { traceId, origin: 'transcript_batch' });
     } catch (timelineError) {
-      console.error('Failed to refresh session event timeline after speech upload:', timelineError);
+      console.error(`Failed to refresh session event timeline after speech upload [${traceId}]:`, timelineError);
     }
 
-    res.json({ success: true, count: values.length });
+    res.json({ success: true, count: values.length, traceId: timelineDiagnosticsEnabled() ? traceId : undefined });
 
   } catch (error) {
-    console.error('Speech segment batch upload error:', error);
+    console.error(`Speech segment batch upload error [${traceId}]:`, error);
     res.status(500).json({
       error: 'Failed to save speech segments',
       message: error instanceof Error ? error.message : 'Unknown error',

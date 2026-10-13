@@ -185,7 +185,10 @@ const WritingSection: React.FC<WritingSectionProps> = ({
         const messageTime = new Date(msg.timestamp).getTime();
         const timestamp = sessionStartTime ? messageTime - sessionStartTime : 0;
         return {
-          role: msg.role,
+          // A Controller guidance card is a system intervention presented to the
+          // participant, not a normal assistant reply. Preserve that distinction
+          // in the submit-time chat-history export.
+          role: msg.isGuidance ? 'user_AI' : msg.role,
           content: msg.content,
           timestamp: timestamp
         };

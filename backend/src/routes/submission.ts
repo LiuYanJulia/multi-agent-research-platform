@@ -4,6 +4,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { isPracticeSession } from '../utils/sessionUtils';
+import { inspectSessionMetadata, sessionMetadataDiagnostic } from '../services/sessionMetadataDiagnostics';
 import { finalizeSessionTimeline } from '../services/manipulationPipeline';
 import { exportEvaluationAudit } from '../services/evaluationAuditExport';
 
@@ -13,6 +14,11 @@ const TREATMENT_GROUP_IDS = new Set(['2', '3', '4', '5', 'hightf_hightm', 'hight
 
 function isTreatmentGroup(groupId: unknown): boolean {
   return TREATMENT_GROUP_IDS.has(String(groupId ?? '').trim().toLowerCase());
+}
+
+function safeFilenamePart(value: unknown): string {
+  const normalized = String(value ?? 'unknown').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+  return normalized.slice(0, 80) || 'unknown';
 }
 
 // Configure multer for audio file uploads
@@ -124,10 +130,23 @@ router.post('/submit', async (req, res) => {
 
         if ((existingSessions as any[]).length === 0) {
           console.log(`Session ${sessionId} not found in database, creating it...`);
-          await db.execute(
+          sessionMetadataDiagnostic({
+            stage: 'auto_create_before',
+            source: 'submission',
+            sessionId,
+            metadata: await inspectSessionMetadata(db, sessionId),
+          });
+          const [autoCreateResult] = await db.execute(
             'INSERT INTO sessions (id, participant_id, status) VALUES (?, ?, ?)',
             [sessionId, 'auto-created', 'active']
           );
+          sessionMetadataDiagnostic({
+            stage: 'auto_create_after',
+            source: 'submission',
+            sessionId,
+            result: autoCreateResult,
+            metadata: await inspectSessionMetadata(db, sessionId),
+          });
           console.log(`Session ${sessionId} created in database`);
         }
       } catch (sessionError) {
@@ -153,6 +172,15 @@ router.post('/submit', async (req, res) => {
 
     // Convert ISO timestamp to MySQL datetime format
     const mysqlTimestamp = new Date(submittedAt).toISOString().slice(0, 19).replace('T', ' ');
+
+    // Use the durable participant ID from the session rather than trusting a
+    // client-provided filename value. The submission endpoint is only reached
+    // after the session has been created for an actual (non-practice) run.
+    const [submissionSessionRows] = await db.execute(
+      'SELECT participant_id FROM sessions WHERE id = ?',
+      [sessionId]
+    );
+    const participantId = (submissionSessionRows as any[])[0]?.participant_id ?? 'unknown';
 
     // Save transcript to a separate JSON file
     const transcriptDir = path.join(__dirname, '../../uploads/transcripts');
@@ -181,6 +209,30 @@ router.post('/submit', async (req, res) => {
     // Write chat history to file
     fs.writeFileSync(chatHistoryPath, JSON.stringify(chatHistoryWithTimestamps || [], null, 2));
     console.log(`Chat history saved to file: ${chatHistoryPath}`);
+
+    // Export the participant's final proposal as an independently reviewable
+    // plain-text artifact. Include the durable participant ID and submission
+    // timestamp in both the filename and the file header.
+    const proposalDir = path.join(__dirname, '../../uploads/proposals');
+    if (!fs.existsSync(proposalDir)) {
+      fs.mkdirSync(proposalDir, { recursive: true });
+    }
+    const submittedAtForFilename = new Date(submittedAt).toISOString().replace(/[-:.]/g, '').replace('T', '_').replace('Z', 'Z');
+    const proposalFilename = `proposal_${safeFilenamePart(participantId)}_${submittedAtForFilename}.txt`;
+    const proposalPath = path.join(proposalDir, proposalFilename);
+    const proposalFileUrl = `/uploads/proposals/${proposalFilename}`;
+    const proposalText = [
+      `User ID: ${participantId}`,
+      `Session ID: ${sessionId}`,
+      `Submitted at: ${submittedAt}`,
+      '',
+      '--- Proposal ---',
+      '',
+      String(finalWriting ?? ''),
+      '',
+    ].join('\n');
+    fs.writeFileSync(proposalPath, proposalText, 'utf8');
+    console.log(`Proposal saved to file: ${proposalPath}`);
 
     // Generate and save interaction logs CSV
     let interactionLogsFileUrl = null;
@@ -320,9 +372,9 @@ router.post('/submit', async (req, res) => {
       // Update existing submission
       await db.execute(
         `UPDATE submissions
-         SET final_writing = ?, transcript_file_url = ?, chat_history_file_url = ?, interaction_logs_file_url = ?, evaluation_audit_json_file_url = ?, evaluation_audit_markdown_file_url = ?, audio_file_url = ?, word_count = ?, char_count = ?, session_start_timestamp = ?, recording_start_timestamp = ?, submitted_at = ?
+         SET final_writing = ?, transcript_file_url = ?, chat_history_file_url = ?, interaction_logs_file_url = ?, proposal_file_url = ?, evaluation_audit_json_file_url = ?, evaluation_audit_markdown_file_url = ?, audio_file_url = ?, word_count = ?, char_count = ?, session_start_timestamp = ?, recording_start_timestamp = ?, submitted_at = ?
          WHERE session_id = ?`,
-        [finalWriting, transcriptFileUrl, chatHistoryFileUrl, interactionLogsFileUrl, evaluationAuditJsonFileUrl, evaluationAuditMarkdownFileUrl, audioFileUrl, wordCount, charCount, sessionStartTimestamp, recordingStartTimestamp, mysqlTimestamp, sessionId]
+        [finalWriting, transcriptFileUrl, chatHistoryFileUrl, interactionLogsFileUrl, proposalFileUrl, evaluationAuditJsonFileUrl, evaluationAuditMarkdownFileUrl, audioFileUrl, wordCount, charCount, sessionStartTimestamp, recordingStartTimestamp, mysqlTimestamp, sessionId]
       );
     } else {
       // Generate unique ID for submission
@@ -330,9 +382,9 @@ router.post('/submit', async (req, res) => {
 
       // Insert new submission
       await db.execute(
-        `INSERT INTO submissions (id, session_id, final_writing, transcript_file_url, chat_history_file_url, interaction_logs_file_url, evaluation_audit_json_file_url, evaluation_audit_markdown_file_url, audio_file_url, word_count, char_count, session_start_timestamp, recording_start_timestamp, submitted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [submissionId, sessionId, finalWriting, transcriptFileUrl, chatHistoryFileUrl, interactionLogsFileUrl, evaluationAuditJsonFileUrl, evaluationAuditMarkdownFileUrl, audioFileUrl, wordCount, charCount, sessionStartTimestamp, recordingStartTimestamp, mysqlTimestamp]
+        `INSERT INTO submissions (id, session_id, final_writing, transcript_file_url, chat_history_file_url, interaction_logs_file_url, proposal_file_url, evaluation_audit_json_file_url, evaluation_audit_markdown_file_url, audio_file_url, word_count, char_count, session_start_timestamp, recording_start_timestamp, submitted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [submissionId, sessionId, finalWriting, transcriptFileUrl, chatHistoryFileUrl, interactionLogsFileUrl, proposalFileUrl, evaluationAuditJsonFileUrl, evaluationAuditMarkdownFileUrl, audioFileUrl, wordCount, charCount, sessionStartTimestamp, recordingStartTimestamp, mysqlTimestamp]
       );
     }
 
@@ -355,6 +407,7 @@ router.post('/submit', async (req, res) => {
         transcriptFileUrl,
         chatHistoryFileUrl,
         interactionLogsFileUrl,
+        proposalFileUrl,
         evaluationAuditJsonFileUrl,
         evaluationAuditMarkdownFileUrl,
       }

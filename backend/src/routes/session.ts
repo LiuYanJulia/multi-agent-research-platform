@@ -4,6 +4,11 @@ import { parseGroupId, initManipulationState, getManipulationState, advancePhase
 import { finalizeSessionTimeline } from '../services/manipulationPipeline';
 import { buildSessionTimeline } from '../services/eventTimelineBuilder';
 import { isPracticeSession } from '../utils/sessionUtils';
+import {
+  inspectSessionMetadata,
+  sessionMetadataDiagnostic,
+  sessionMetadataErrorSummary,
+} from '../services/sessionMetadataDiagnostics';
 
 const router = express.Router();
 
@@ -54,16 +59,47 @@ router.post('/create', async (req, res) => {
     const metadata = Number.isFinite(clientStart) && clientStart > 0
       ? JSON.stringify({ sessionStartEpochMs: clientStart })
       : null;
-    await db.execute(
-      `INSERT INTO sessions (id, participant_id, group_id, status, metadata)
-       VALUES (?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         participant_id = VALUES(participant_id),
-         group_id = VALUES(group_id),
-         status = VALUES(status),
-         metadata = COALESCE(VALUES(metadata), metadata)`,
-      [sessionId, participantId, condition?.groupId ?? null, 'active', metadata]
-    );
+    sessionMetadataDiagnostic({
+      stage: 'session_create_before',
+      sessionId,
+      operation: 'INSERT ... ON DUPLICATE KEY UPDATE metadata = COALESCE(new metadata, existing metadata)',
+      requestSessionStartEpochMs: Number.isFinite(clientStart) && clientStart > 0 ? clientStart : null,
+      metadataPayloadBytes: metadata?.length ?? 0,
+      metadata: await inspectSessionMetadata(db, sessionId),
+    });
+    let createResult: unknown;
+    try {
+      [createResult] = await db.execute(
+        `INSERT INTO sessions (id, participant_id, group_id, status, metadata)
+         VALUES (?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           participant_id = VALUES(participant_id),
+           group_id = VALUES(group_id),
+           status = VALUES(status),
+           metadata = COALESCE(VALUES(metadata), metadata)`,
+        [sessionId, participantId, condition?.groupId ?? null, 'active', metadata]
+      );
+    } catch (createError) {
+      sessionMetadataDiagnostic({
+        stage: 'session_create_failed',
+        sessionId,
+        operation: 'INSERT ... ON DUPLICATE KEY UPDATE metadata = COALESCE(new metadata, existing metadata)',
+        requestSessionStartEpochMs: Number.isFinite(clientStart) && clientStart > 0 ? clientStart : null,
+        metadataPayloadBytes: metadata?.length ?? 0,
+        metadata: await inspectSessionMetadata(db, sessionId),
+        error: sessionMetadataErrorSummary(createError),
+      });
+      throw createError;
+    }
+    sessionMetadataDiagnostic({
+      stage: 'session_create_after',
+      sessionId,
+      operation: 'INSERT ... ON DUPLICATE KEY UPDATE metadata = COALESCE(new metadata, existing metadata)',
+      requestSessionStartEpochMs: Number.isFinite(clientStart) && clientStart > 0 ? clientStart : null,
+      metadataPayloadBytes: metadata?.length ?? 0,
+      result: createResult,
+      metadata: await inspectSessionMetadata(db, sessionId),
+    });
 
     // Paper 2: initialize the manipulation_state row for this session's condition.
     // Skipped entirely when no valid groupId was given (see comment above).

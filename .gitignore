@@ -19,6 +19,7 @@ backend/uploads/
 extracted_writings_by_user/
 extracted_writings_fixed/
 pilot_participant_introductions/
+scripts/test_data/
 
 # Build outputs
 dist/

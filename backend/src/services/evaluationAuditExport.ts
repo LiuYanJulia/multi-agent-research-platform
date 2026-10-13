@@ -29,6 +29,9 @@ function formatAuditMarkdown(sessionId: string, rows: any[]): string {
     const controllerInput = parsePayload(row.controller_input_payload);
     const controllerOutput = parsePayload(row.controller_output_payload);
     const ledgerDelta = parsePayload(row.move_ledger_delta);
+    const aiGuidance = evaluationOutput && typeof evaluationOutput === 'object'
+      ? (evaluationOutput as Record<string, unknown>).aiGuidance ?? null
+      : null;
     lines.push(
       `## Evaluation #${row.id} · controller turn ${row.turn_index}`,
       '',
@@ -50,6 +53,10 @@ function formatAuditMarkdown(sessionId: string, rows: any[]): string {
       '### Controller input and output',
       '',
       jsonBlock({ input: controllerInput, output: controllerOutput, error: row.controller_error_message || null }),
+      '',
+      '### AI-guidance decision',
+      '',
+      jsonBlock(aiGuidance),
       '',
       '### Move-ledger delta for this evaluation',
       '',

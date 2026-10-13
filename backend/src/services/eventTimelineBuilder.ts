@@ -5,6 +5,8 @@
  */
 import mysql from 'mysql2/promise';
 
+type SqlExecutor = Pick<mysql.Pool, 'execute'>;
+
 type EventType = 'user_action' | 'user_speech' | 'user_message' | 'ai_response';
 
 export interface TimelineEvent {
@@ -27,6 +29,13 @@ interface InteractionLog {
   text_content: string | null;
   metadata: unknown;
   timestamp: number;
+}
+
+type TimelineSource = 'interaction_logs' | 'speech_segments' | 'messages';
+
+interface SessionClock {
+  sessionStartEpochMs: number;
+  recordingStartEpochMs: number | null;
 }
 
 interface NormalizedLog extends InteractionLog {
@@ -61,6 +70,44 @@ interface Behavior {
 
 const FILLER_TRANSCRIPTS = new Set(['', '.', 'um', 'uh', 'erm', 'hmm', 'mm', 'uhh', 'umm', 'ah', 'eh', 'uhuh', 'mmhmm']);
 const activeBuilds = new Map<string, Promise<TimelineEvent[]>>();
+import { inspectSessionMetadata, sessionMetadataDiagnostic } from './sessionMetadataDiagnostics';
+
+// LOCAL DIAGNOSTICS ONLY — set TIMELINE_DIAGNOSTICS=false before pushing/deploying.
+// Read at call time because dotenv is initialized after route modules load.
+function timelineDiagnosticsEnabled(): boolean {
+  return process.env.TIMELINE_DIAGNOSTICS === 'true';
+}
+
+export interface TimelineDiagnostics {
+  traceId?: string;
+  origin?: string;
+}
+
+interface TimelineDiagnosticContext extends TimelineDiagnostics {
+  sessionId: string;
+  stage: string;
+  connectionThreadId?: number;
+  [key: string]: unknown;
+}
+
+function errorSummary(error: unknown): Record<string, unknown> {
+  if (!(error instanceof Error)) return { value: String(error) };
+  const mysqlError = error as Error & { code?: unknown; errno?: unknown; sqlState?: unknown; sqlMessage?: unknown };
+  return {
+    name: mysqlError.name,
+    message: mysqlError.message,
+    code: mysqlError.code,
+    errno: mysqlError.errno,
+    sqlState: mysqlError.sqlState,
+    sqlMessage: mysqlError.sqlMessage,
+  };
+}
+
+function timelineDiagnostic(context: TimelineDiagnosticContext): void {
+  if (!timelineDiagnosticsEnabled()) return;
+  // Never include transcript, chat, interaction text, or full metadata here.
+  console.info('[TIMELINE_DIAGNOSTIC]', JSON.stringify({ at: new Date().toISOString(), ...context }));
+}
 
 function parseObject(value: unknown): Record<string, unknown> {
   if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
@@ -77,8 +124,14 @@ function text(value: unknown): string {
   return typeof value === 'string' ? value : value == null ? '' : String(value);
 }
 
-function normalizeTranscript(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+/**
+ * This normalisation is deliberately used only for the small English filler
+ * vocabulary. The previous ASCII-only expression converted Chinese/Korean-only
+ * speech to an empty string, which is itself a filler value, and silently
+ * removed it from the timeline.
+ */
+function normalizeFillerCandidate(value: string): string {
+  return value.trim().toLocaleLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
 }
 
 function normalizeUiReferences(value: string): string {
@@ -235,7 +288,11 @@ function narrateHover(logs: NormalizedLog[]): string | null {
 function narrateUi(logs: NormalizedLog[]): string {
   const first = logs[0];
   if (logs.some((log) => log.action === 'composer_interaction')) {
-    const typed = narrateText(logs.filter((log) => ['text_insert', 'text_delete'].includes(log.action)));
+    const textLogs = logs.filter((log) => ['text_insert', 'text_delete'].includes(log.action));
+    // A Send click may arrive in a later interaction-log batch than the
+    // preceding keystrokes. It is still a valid standalone UI event.
+    if (textLogs.length === 0) return 'User sent a message in prompting box';
+    const typed = narrateText(textLogs);
     return typed.includes('User ') ? `${typed.replace(/ in .*$/, '')} in prompting box and sent the message` : 'User sent a message in prompting box';
   }
   if (first.action === 'message_action') return `User performed '${text(first.metadataObject.actionType) || 'unknown'}' action on message${first.metadataObject.messageId != null ? ` (Message ID: ${first.metadataObject.messageId})` : ''}`;
@@ -273,46 +330,167 @@ function eventSort(a: Omit<TimelineEvent, 'eventId'>, b: Omit<TimelineEvent, 'ev
   return rank[a.eventType] - rank[b.eventType];
 }
 
-async function sessionStartEpoch(db: mysql.Pool, sessionId: string): Promise<number> {
-  const [rows] = await db.execute('SELECT started_at, created_at, metadata FROM sessions WHERE id = ?', [sessionId]);
+async function sessionClock(db: SqlExecutor, sessionId: string): Promise<SessionClock> {
+  sessionMetadataDiagnostic({
+    stage: 'timeline_session_clock_read_before',
+    sessionId,
+    metadata: await inspectSessionMetadata(db, sessionId),
+  });
+  let rows: unknown;
+  try {
+    [rows] = await db.execute('SELECT started_at, created_at, metadata FROM sessions WHERE id = ?', [sessionId]);
+  } catch (error) {
+    sessionMetadataDiagnostic({
+      stage: 'timeline_session_clock_read_failed',
+      sessionId,
+      metadata: await inspectSessionMetadata(db, sessionId),
+      error: error instanceof Error ? { name: error.name, message: error.message } : { value: String(error) },
+    });
+    throw error;
+  }
   const session = (rows as any[])[0];
   if (!session) throw new Error(`Session ${sessionId} was not found while building its timeline`);
   const metadata = parseObject(session.metadata);
   const clientStart = Number(metadata.sessionStartEpochMs);
-  if (Number.isFinite(clientStart) && clientStart > 0) return clientStart;
+  const recordingStart = Number(metadata.recordingStartEpochMs);
+  sessionMetadataDiagnostic({
+    stage: 'timeline_session_clock_read_after',
+    sessionId,
+    decodedSessionStartEpochMs: Number.isFinite(clientStart) && clientStart > 0 ? clientStart : null,
+    decodedRecordingStartEpochMs: Number.isFinite(recordingStart) && recordingStart > 0 ? recordingStart : null,
+  });
+  if (Number.isFinite(clientStart) && clientStart > 0) {
+    return {
+      sessionStartEpochMs: clientStart,
+      recordingStartEpochMs: Number.isFinite(recordingStart) && recordingStart > 0 ? recordingStart : null,
+    };
+  }
   const fallback = new Date(session.started_at || session.created_at).getTime();
   if (!Number.isFinite(fallback)) throw new Error(`Session ${sessionId} has no usable start timestamp`);
-  return fallback;
+  return {
+    sessionStartEpochMs: fallback,
+    recordingStartEpochMs: Number.isFinite(recordingStart) && recordingStart > 0 ? recordingStart : null,
+  };
 }
 
-/** Serialize rebuilds per session so concurrent log, speech, and chat requests cannot overwrite a newer snapshot. */
-export async function buildSessionTimeline(db: mysql.Pool, sessionId: string): Promise<TimelineEvent[]> {
-  const previous = activeBuilds.get(sessionId);
-  const current = (previous ? previous.catch(() => []) : Promise.resolve([])).then(() => rebuildSessionTimeline(db, sessionId));
-  activeBuilds.set(sessionId, current);
-  try {
-    return await current;
-  } finally {
-    if (activeBuilds.get(sessionId) === current) activeBuilds.delete(sessionId);
+function toEpochSpeechTimestamp(value: unknown, clock: SessionClock): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return clock.sessionStartEpochMs;
+  // Current clients persist epoch milliseconds. Retain a safe conversion path
+  // for any older relative-time rows, anchoring them to recording start (not
+  // session start) because microphone capture may begin later than the page.
+  if (numeric >= 100_000_000_000) return numeric;
+  return (clock.recordingStartEpochMs ?? clock.sessionStartEpochMs) + numeric;
+}
+
+function eventFromRow(row: any): TimelineEvent {
+  return {
+    eventId: Number(row.event_id),
+    timestampStart: Number(row.timestamp_start),
+    timestampEnd: Number(row.timestamp_end),
+    eventType: row.event_type as EventType,
+    actionDescription: text(row.action_description),
+    speech: text(row.speech),
+    userMessage: text(row.user_message),
+    aiResponse: text(row.ai_response),
+  };
+}
+
+async function loadMaterializedEvents(db: SqlExecutor, sessionId: string): Promise<TimelineEvent[]> {
+  const [rows] = await db.execute(
+    `SELECT event_id, timestamp_start, timestamp_end, event_type, action_description, speech, user_message, ai_response
+     FROM session_events WHERE session_id = ? ORDER BY event_id ASC`,
+    [sessionId]
+  );
+  return (rows as any[]).map(eventFromRow);
+}
+
+/**
+ * Initialise the raw-source watermarks for a pre-existing timeline. This is a
+ * one-time compatibility guard: it prevents a deployed incremental reader from
+ * replaying historical source rows into an already-evaluated session. New
+ * sessions receive zero cursors and are materialised entirely incrementally.
+ */
+async function sourceCursors(db: SqlExecutor, sessionId: string): Promise<Map<TimelineSource, number>> {
+  const sources: TimelineSource[] = ['interaction_logs', 'speech_segments', 'messages'];
+  const [cursorRows] = await db.execute(
+    'SELECT source_name, last_source_id FROM timeline_source_cursors WHERE session_id = ?',
+    [sessionId]
+  );
+  const existing = new Map<TimelineSource, number>((cursorRows as any[]).map((row) => [row.source_name as TimelineSource, Number(row.last_source_id)]));
+  if (existing.size === sources.length) return existing;
+
+  const [eventRows] = await db.execute('SELECT COUNT(*) AS count FROM session_events WHERE session_id = ?', [sessionId]);
+  const hasLegacyTimeline = Number((eventRows as any[])[0]?.count ?? 0) > 0;
+  for (const source of sources) {
+    if (existing.has(source)) continue;
+    let watermark = 0;
+    if (hasLegacyTimeline) {
+      const table = source;
+      const [maxRows] = await db.execute(`SELECT COALESCE(MAX(id), 0) AS max_id FROM ${table} WHERE session_id = ?`, [sessionId]);
+      watermark = Number((maxRows as any[])[0]?.max_id ?? 0);
+    }
+    await db.execute(
+      `INSERT INTO timeline_source_cursors (session_id, source_name, last_source_id)
+       VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE last_source_id = last_source_id`,
+      [sessionId, source, watermark]
+    );
+    existing.set(source, watermark);
   }
+  return existing;
 }
 
-/** Rebuild the canonical event sequence from all currently persisted raw sources. */
-async function rebuildSessionTimeline(db: mysql.Pool, sessionId: string): Promise<TimelineEvent[]> {
-  const startEpoch = await sessionStartEpoch(db, sessionId);
-  const [logRows, speechRows, messageRows] = await Promise.all([
-    db.execute('SELECT id, event_type, action, target_element, target_section, text_content, metadata, timestamp FROM interaction_logs WHERE session_id = ? ORDER BY timestamp ASC, id ASC', [sessionId]),
-    db.execute('SELECT timestamp_start, timestamp_end, transcription FROM speech_segments WHERE session_id = ? ORDER BY timestamp_start ASC, id ASC', [sessionId]),
-    db.execute('SELECT id, role, content, is_guidance, timestamp FROM messages WHERE session_id = ? ORDER BY timestamp ASC, id ASC', [sessionId]),
-  ]);
+function mergeSpeechSegments(segments: Array<{ timestampStart: number; timestampEnd: number; transcription: string }>) {
+  const merged: Array<{ timestampStart: number; timestampEnd: number; transcription: string }> = [];
+  for (const segment of segments.sort((a, b) => a.timestampStart - b.timestampStart || a.timestampEnd - b.timestampEnd)) {
+    const previous = merged[merged.length - 1];
+    // Realtime VAD can split one continuous utterance at a transport boundary.
+    // Merge only an essentially adjacent pair: a 500ms-or-shorter gap is the
+    // timestamp gap between the prior chunk's end and this chunk's start, not
+    // the browser's separate local-VAD commit setting.
+    if (previous && segment.timestampStart - previous.timestampEnd <= 500) {
+      previous.timestampEnd = Math.max(previous.timestampEnd, segment.timestampEnd);
+      previous.transcription = `${previous.transcription} ${segment.transcription}`.replace(/\s+/g, ' ').trim();
+    } else {
+      merged.push({ ...segment });
+    }
+  }
+  return merged;
+}
 
-  const rawLogs = logRows[0] as InteractionLog[];
+/**
+ * The pure preprocessing core shared by the live MySQL materializer and the
+ * file-based verification notebook. Callers are responsible for supplying
+ * only source rows after their durable source cursors; this function applies
+ * the same normalisation, narration, timestamp alignment, and event ordering
+ * used in production.
+ */
+export interface TimelineRowsInput {
+  sessionStartEpochMs: number;
+  recordingStartEpochMs?: number | null;
+  interactionLogs: InteractionLog[];
+  speechSegments: Array<{ id: number; timestamp_start: number; timestamp_end: number; transcription: string | null }>;
+  messages: Array<{ id: number; role: 'user' | 'assistant'; content: string; is_guidance?: boolean | number; timestamp: string | Date }>;
+  // Context only: this row was already consumed by the message source cursor
+  // and is never emitted again. It lets a newly-arrived assistant response keep
+  // the conventional +1s placement after its preceding user message.
+  previousUserMessageTimestamp?: string | Date | null;
+  nextEventId?: number;
+}
+
+export function buildTimelineEventsFromRows(input: TimelineRowsInput): TimelineEvent[] {
+  const clock: SessionClock = {
+    sessionStartEpochMs: input.sessionStartEpochMs,
+    recordingStartEpochMs: input.recordingStartEpochMs ?? null,
+  };
+  const rawLogs = input.interactionLogs;
   const normalized = rawLogs
     .filter((log) => !(log.action === 'hover_start' && log.target_element === '#root'))
     .filter((log) => log.action !== 'selection_clear')
     .map((log) => {
       const metadata = parseObject(log.metadata);
-      return { ...log, absoluteTimestamp: startEpoch + Number(log.timestamp), metadataObject: metadata, category: categoryFor(log, metadata) };
+      return { ...log, absoluteTimestamp: clock.sessionStartEpochMs + Number(log.timestamp), metadataObject: metadata, category: categoryFor(log, metadata) };
     })
     .filter((log) => !(log.action === 'key_press' && text(log.metadataObject.key) === 'CapsLock'))
     .filter((log, index, all) => {
@@ -324,12 +502,14 @@ async function rebuildSessionTimeline(db: mysql.Pool, sessionId: string): Promis
   for (const behavior of behaviors) behavior.narration = narrateBehavior(behavior);
 
   const unmergedSpeech: Array<{ timestampStart: number; timestampEnd: number; transcription: string }> = [];
-  for (const row of speechRows[0] as any[]) {
+  for (const row of input.speechSegments) {
     const transcription = text(row.transcription).trim();
-    if (FILLER_TRANSCRIPTS.has(normalizeTranscript(transcription))) continue;
-    const target = behaviors.find((behavior) => behavior.narration && behavior.timestampStart <= Number(row.timestamp_start) && Number(row.timestamp_end) <= behavior.timestampEnd);
+    if (FILLER_TRANSCRIPTS.has(normalizeFillerCandidate(transcription))) continue;
+    const timestampStart = toEpochSpeechTimestamp(row.timestamp_start, clock);
+    const timestampEnd = toEpochSpeechTimestamp(row.timestamp_end, clock);
+    const target = behaviors.find((behavior) => behavior.narration && behavior.timestampStart <= timestampStart && timestampEnd <= behavior.timestampEnd);
     if (target) target.mergedSpeech = `${target.mergedSpeech} ${transcription}`.trim();
-    else unmergedSpeech.push({ timestampStart: Number(row.timestamp_start), timestampEnd: Number(row.timestamp_end), transcription });
+    else unmergedSpeech.push({ timestampStart, timestampEnd, transcription });
   }
 
   const pending: Omit<TimelineEvent, 'eventId'>[] = [];
@@ -337,16 +517,122 @@ async function rebuildSessionTimeline(db: mysql.Pool, sessionId: string): Promis
     if (!behavior.narration || behavior.narration.toLowerCase().includes('unknown section')) continue;
     pending.push({ timestampStart: behavior.timestampStart, timestampEnd: behavior.timestampEnd, eventType: 'user_action', actionDescription: normalizeUiReferences(behavior.narration), speech: behavior.mergedSpeech, userMessage: '', aiResponse: '' });
   }
-  for (const speech of unmergedSpeech) pending.push({ timestampStart: speech.timestampStart, timestampEnd: speech.timestampEnd, eventType: 'user_speech', actionDescription: '', speech: speech.transcription, userMessage: '', aiResponse: '' });
-  for (const row of messageRows[0] as any[]) {
+  for (const speech of mergeSpeechSegments(unmergedSpeech)) pending.push({ timestampStart: speech.timestampStart, timestampEnd: speech.timestampEnd, eventType: 'user_speech', actionDescription: '', speech: speech.transcription, userMessage: '', aiResponse: '' });
+  let precedingUserTimestamp = input.previousUserMessageTimestamp == null
+    ? null
+    : new Date(input.previousUserMessageTimestamp).getTime();
+  if (!Number.isFinite(precedingUserTimestamp)) precedingUserTimestamp = null;
+  for (const row of input.messages) {
     if (row.is_guidance) continue;
-    const timestamp = new Date(row.timestamp).getTime();
-    if (!Number.isFinite(timestamp)) continue;
-    pending.push({ timestampStart: timestamp, timestampEnd: timestamp, eventType: row.role === 'assistant' ? 'ai_response' : 'user_message', actionDescription: '', speech: '', userMessage: row.role === 'user' ? text(row.content) : '', aiResponse: row.role === 'assistant' ? text(row.content) : '' });
+    const sourceTimestamp = new Date(row.timestamp).getTime();
+    if (!Number.isFinite(sourceTimestamp)) continue;
+    if (row.role === 'user') {
+      precedingUserTimestamp = sourceTimestamp;
+      pending.push({ timestampStart: sourceTimestamp, timestampEnd: sourceTimestamp, eventType: 'user_message', actionDescription: '', speech: '', userMessage: text(row.content), aiResponse: '' });
+      continue;
+    }
+    // This is a presentation timestamp applied after source-row selection.
+    // It must not affect source cursor movement or which rows are evaluated.
+    const timelineTimestamp = precedingUserTimestamp == null ? sourceTimestamp + 1_000 : precedingUserTimestamp + 1_000;
+    pending.push({ timestampStart: timelineTimestamp, timestampEnd: timelineTimestamp, eventType: 'ai_response', actionDescription: '', speech: '', userMessage: '', aiResponse: text(row.content) });
   }
 
-  const events = pending.sort(eventSort).map((event, index) => ({ ...event, eventId: index + 1 }));
-  await db.execute('DELETE FROM session_events WHERE session_id = ?', [sessionId]);
+  let nextEventId = input.nextEventId ?? 1;
+  return pending.sort(eventSort).map((event) => ({ ...event, eventId: nextEventId++ }));
+}
+
+/** Serialize incremental materialisations so concurrent source uploads cannot race. */
+export async function buildSessionTimeline(db: mysql.Pool, sessionId: string, diagnostics: TimelineDiagnostics = {}): Promise<TimelineEvent[]> {
+  const traceId = diagnostics.traceId ?? `timeline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const diagnosticContext = { ...diagnostics, traceId };
+  const previous = activeBuilds.get(sessionId);
+  timelineDiagnostic({ ...diagnosticContext, sessionId, stage: previous ? 'queued_after_active_build' : 'build_requested' });
+  const current = (previous ? previous.catch(() => []) : Promise.resolve([])).then(() => materializeTimelineDelta(db, sessionId, diagnosticContext));
+  activeBuilds.set(sessionId, current);
+  try {
+    return await current;
+  } finally {
+    if (activeBuilds.get(sessionId) === current) activeBuilds.delete(sessionId);
+  }
+}
+
+/**
+ * Read only the unconsumed rows from each raw source, turn that delta into
+ * canonical events, and advance the three durable source watermarks together.
+ * The Evaluation Agent has a separate last_evaluated_event_id cursor; it never
+ * doubles as a raw-data ingestion cursor.
+ */
+async function materializeTimelineDelta(db: mysql.Pool, sessionId: string, diagnostics: TimelineDiagnostics): Promise<TimelineEvent[]> {
+  let connection: mysql.PoolConnection | null = null;
+  let stage = 'acquire_connection';
+  try {
+    connection = await db.getConnection();
+    timelineDiagnostic({ ...diagnostics, sessionId, stage, connectionThreadId: connection.threadId });
+    stage = 'begin_transaction';
+    await connection.beginTransaction();
+    stage = 'materialize_delta';
+    const events = await materializeTimelineDeltaOnce(connection, sessionId, diagnostics);
+    stage = 'commit';
+    await connection.commit();
+    timelineDiagnostic({ ...diagnostics, sessionId, stage: 'committed', connectionThreadId: connection.threadId, eventCount: events.length });
+    return events;
+  } catch (originalError) {
+    timelineDiagnostic({ ...diagnostics, sessionId, stage: `${stage}:primary_error`, connectionThreadId: connection?.threadId, error: errorSummary(originalError) });
+    if (connection) {
+      try {
+        await connection.rollback();
+        timelineDiagnostic({ ...diagnostics, sessionId, stage: `${stage}:rollback_succeeded`, connectionThreadId: connection.threadId });
+      } catch (rollbackError) {
+        // Preserve originalError for the caller; this rollback failure is secondary.
+        timelineDiagnostic({ ...diagnostics, sessionId, stage: `${stage}:rollback_failed`, connectionThreadId: connection.threadId, error: errorSummary(rollbackError) });
+      }
+    }
+    throw originalError;
+  } finally {
+    if (connection) connection.release();
+  }
+}
+
+async function materializeTimelineDeltaOnce(db: SqlExecutor, sessionId: string, diagnostics: TimelineDiagnostics): Promise<TimelineEvent[]> {
+  timelineDiagnostic({ ...diagnostics, sessionId, stage: 'load_session_clock' });
+  const clock = await sessionClock(db, sessionId);
+  timelineDiagnostic({ ...diagnostics, sessionId, stage: 'load_source_cursors' });
+  const cursors = await sourceCursors(db, sessionId);
+  const messageCursor = cursors.get('messages') ?? 0;
+  timelineDiagnostic({
+    ...diagnostics,
+    sessionId,
+    stage: 'fetch_source_deltas',
+    sourceCursors: Object.fromEntries(cursors),
+  });
+  const [logRows, speechRows, messageRows, priorUserRows] = await Promise.all([
+    db.execute('SELECT id, event_type, action, target_element, target_section, text_content, metadata, timestamp FROM interaction_logs WHERE session_id = ? AND id > ? ORDER BY id ASC', [sessionId, cursors.get('interaction_logs') ?? 0]),
+    db.execute('SELECT id, timestamp_start, timestamp_end, transcription FROM speech_segments WHERE session_id = ? AND id > ? ORDER BY id ASC', [sessionId, cursors.get('speech_segments') ?? 0]),
+    db.execute('SELECT id, role, content, is_guidance, timestamp FROM messages WHERE session_id = ? AND id > ? ORDER BY id ASC', [sessionId, messageCursor]),
+    messageCursor > 0
+      ? db.execute("SELECT timestamp FROM messages WHERE session_id = ? AND role = 'user' AND id <= ? ORDER BY id DESC LIMIT 1", [sessionId, messageCursor])
+      : Promise.resolve([[]]),
+  ]);
+
+  timelineDiagnostic({
+    ...diagnostics,
+    sessionId,
+    stage: 'source_deltas_loaded',
+    sourceRowCounts: { interaction_logs: (logRows[0] as any[]).length, speech_segments: (speechRows[0] as any[]).length, messages: (messageRows[0] as any[]).length },
+  });
+
+  timelineDiagnostic({ ...diagnostics, sessionId, stage: 'load_event_watermark' });
+  const [maxRows] = await db.execute('SELECT COALESCE(MAX(event_id), 0) AS max_event_id FROM session_events WHERE session_id = ?', [sessionId]);
+  const events = buildTimelineEventsFromRows({
+    sessionStartEpochMs: clock.sessionStartEpochMs,
+    recordingStartEpochMs: clock.recordingStartEpochMs,
+    interactionLogs: logRows[0] as InteractionLog[],
+    speechSegments: speechRows[0] as any[],
+    messages: messageRows[0] as any[],
+    previousUserMessageTimestamp: (priorUserRows[0] as any[])[0]?.timestamp ?? null,
+    nextEventId: Number((maxRows as any[])[0]?.max_event_id ?? 0) + 1,
+  });
+  timelineDiagnostic({ ...diagnostics, sessionId, stage: 'insert_timeline_events', generatedEventCount: events.length });
   for (const event of events) {
     await db.execute(
       `INSERT INTO session_events (session_id, event_id, timestamp_start, timestamp_end, event_type, action_description, speech, user_message, ai_response)
@@ -354,7 +640,24 @@ async function rebuildSessionTimeline(db: mysql.Pool, sessionId: string): Promis
       [sessionId, event.eventId, event.timestampStart, event.timestampEnd, event.eventType, event.actionDescription || null, event.speech || null, event.userMessage || null, event.aiResponse || null]
     );
   }
-  return events;
+  const sourceMaxima: Array<[TimelineSource, any[]]> = [
+    ['interaction_logs', logRows[0] as any[]],
+    ['speech_segments', speechRows[0] as any[]],
+    ['messages', messageRows[0] as any[]],
+  ];
+  timelineDiagnostic({ ...diagnostics, sessionId, stage: 'advance_source_cursors' });
+  for (const [source, rows] of sourceMaxima) {
+    const lastId = rows.length ? Number(rows[rows.length - 1].id) : null;
+    if (lastId !== null) {
+      await db.execute(
+        `UPDATE timeline_source_cursors
+         SET last_source_id = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE session_id = ? AND source_name = ?`,
+        [lastId, sessionId, source]
+      );
+    }
+  }
+  return loadMaterializedEvents(db, sessionId);
 }
 
 export function partitionEndingAtLatestUserMessage(events: TimelineEvent[]): TimelineEvent[] {

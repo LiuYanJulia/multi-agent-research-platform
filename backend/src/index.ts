@@ -187,6 +187,7 @@ async function createTables() {
         transcript_file_url VARCHAR(255),
         chat_history_file_url VARCHAR(255),
         interaction_logs_file_url VARCHAR(255),
+        proposal_file_url VARCHAR(255),
         evaluation_audit_json_file_url VARCHAR(255),
         evaluation_audit_markdown_file_url VARCHAR(255),
         audio_file_url VARCHAR(255),
@@ -340,6 +341,23 @@ async function createTables() {
       )
     `);
 
+    // timeline_source_cursors: independent raw-source watermarks for the online
+    // preprocessing pipeline. They prevent interaction logs, speech segments,
+    // and chat history from being re-ingested into session_events on every
+    // Evaluation Agent trigger. This is intentionally separate from
+    // manipulation_state.last_evaluated_event_id, which only records what the
+    // Evaluation Agent has already consumed.
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS timeline_source_cursors (
+        session_id VARCHAR(36) NOT NULL,
+        source_name ENUM('interaction_logs', 'speech_segments', 'messages') NOT NULL,
+        last_source_id BIGINT NOT NULL DEFAULT 0,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (session_id, source_name),
+        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+      )
+    `);
+
     // speech_segments: raw realtime transcription segments, before smart-merge into session_events
     await db.execute(`
       CREATE TABLE IF NOT EXISTS speech_segments (
@@ -373,6 +391,7 @@ async function createTables() {
     await ensureColumn('messages', 'is_guidance', "BOOLEAN DEFAULT FALSE");
     await ensureColumn('submissions', 'evaluation_audit_json_file_url', "VARCHAR(255) NULL");
     await ensureColumn('submissions', 'evaluation_audit_markdown_file_url', "VARCHAR(255) NULL");
+    await ensureColumn('submissions', 'proposal_file_url', "VARCHAR(255) NULL");
     await ensureColumn('manipulation_state', 'last_evaluated_event_id', "INT NOT NULL DEFAULT 0");
     await ensureColumn('manipulation_state', 'streak_suppression_remaining', "INT NOT NULL DEFAULT 0");
     await ensureDecisionAgentEnum();

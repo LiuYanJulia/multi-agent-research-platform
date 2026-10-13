@@ -88,6 +88,8 @@ interface EvaluationAuditParams {
   controllerCompletedAt?: Date;
   controllerStatus: AgentStatus | 'not_run';
   controllerErrorMessage?: string;
+  /** Full AI-guidance decision attached to the evaluator-centred audit record. */
+  aiGuidance?: unknown;
   stateBefore: Awaited<ReturnType<typeof getManipulationState>>;
   stateAfter: Awaited<ReturnType<typeof getManipulationState>>;
   moveLedgerCountBefore: number;
@@ -141,7 +143,7 @@ async function logEvaluationAudit(db: SqlExecutor, p: EvaluationAuditParams): Pr
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       p.sessionId, p.turnIndex, p.initiation.triggerType, p.initiation.reason,
-      safeStringify(p.evaluationInput), safeStringify({ moves: p.evaluation.moves, raw: p.evaluation.raw }), p.evaluation.modelUsed,
+      safeStringify(p.evaluationInput), safeStringify({ moves: p.evaluation.moves, raw: p.evaluation.raw, aiGuidance: p.aiGuidance ?? null }), p.evaluation.modelUsed,
       p.evaluationStartedAt, p.evaluationCompletedAt, p.evaluationCompletedAt.getTime() - p.evaluationStartedAt.getTime(),
       evaluationLogStatus(p.evaluation), p.evaluation.retryCount,
       p.controllerInput === undefined ? null : safeStringify(p.controllerInput),
@@ -408,6 +410,13 @@ async function runTurnPipelineOnce(
     controllerStartedAt: controllerStart,
     controllerCompletedAt: controllerEnd,
     controllerStatus: instruction.debug.guidanceUsedFallback ? 'fallback_used' : 'success',
+    aiGuidance: {
+      intervened: instruction.intervened,
+      targetOrientation: instruction.targetOrientation,
+      targetMagnitude: instruction.targetMagnitude,
+      specification: instruction.guidanceSpec,
+      visibleGuidanceMessage: instruction.guidanceText,
+    },
     stateBefore: state,
     stateAfter: updatedState,
     moveLedgerCountBefore,
