@@ -126,6 +126,45 @@ router.post('/create', async (req, res) => {
   }
 });
 
+// POST /api/session/:sessionId/start-practice - Align the practice-session clock
+// with the participant's Start Practice click. This is used only for the single
+// two-minute practice flow (groups 2/3); two-phase practice keeps its original clock.
+router.post('/:sessionId/start-practice', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const clientStart = Number(req.body?.sessionStartTimestamp);
+    const db = (req as any).db;
+
+    if (!Number.isFinite(clientStart) || clientStart <= 0) {
+      return res.status(400).json({ error: 'A valid practice start timestamp is required' });
+    }
+    if (!isPracticeSession(sessionId)) {
+      return res.status(400).json({ error: 'Only practice sessions can reset their start time' });
+    }
+    if (!db) {
+      return res.json({ updated: true, sessionStartTimestamp: clientStart });
+    }
+
+    const [result] = await db.execute(
+      `UPDATE sessions
+       SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.sessionStartEpochMs', CAST(? AS UNSIGNED))
+       WHERE id = ?`,
+      [clientStart, sessionId]
+    );
+    if ((result as any).affectedRows === 0) {
+      return res.status(404).json({ error: 'Practice session not found' });
+    }
+
+    res.json({ updated: true, sessionStartTimestamp: clientStart });
+  } catch (error) {
+    console.error('Start practice error:', error);
+    res.status(500).json({
+      error: 'Failed to start practice',
+      message: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
 // POST /api/session/:sessionId/advance-phase - Low-TF only: advance from Phase 1 (collect) to Phase 2 (synthesize)
 router.post('/:sessionId/advance-phase', async (req, res) => {
   try {

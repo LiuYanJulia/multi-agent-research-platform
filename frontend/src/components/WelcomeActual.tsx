@@ -62,7 +62,7 @@ const WelcomeActual: React.FC<WelcomeActualProps> = ({ onStart, groupId }) => {
               Your Task: Design a Platform for Adults to Learn
             </h2>
             <p style={{ marginBottom: '0.75rem' }}>
-              Your task is to <strong>design a learning platform for adults</strong> and <strong>write down your product design proposal in the writing box on the right-hand side of the platform</strong>.
+              Your task is to design an adult learning platform with <strong>creativity</strong> and <strong>write down your product design proposal in the writing box on the right-hand side of the platform</strong>.
             </p>
           </div>
 
@@ -121,7 +121,7 @@ const WelcomeActual: React.FC<WelcomeActualProps> = ({ onStart, groupId }) => {
               marginBottom: '1.5rem'
             }}>
               <p style={{ fontSize: '0.875rem', color: '#065f46' }}>
-                <strong>AI guidance may occasionally appear in the chat.</strong> When it does, select Insert to follow the guidance as you continue the discussion.
+                <strong>AI guidance may occasionally appear in the chat.</strong> When it does, select View to review it, then Insert to follow the guidance as you continue the discussion.
               </p>
             </div>
           )}

@@ -229,7 +229,7 @@ function elementFor(log: NormalizedLog): string {
 }
 
 function shouldInclude(log: NormalizedLog): boolean {
-  if (['cursor_move', 'selection_clear', 'keyboard_shortcut', 'second_ai_suggestion_presented', 'second_ai_suggestion_inserted', 'ai_guidance_presented', 'ai_guidance_inserted', 'ai_guidance_expired', 'ai_guidance_replaced'].includes(log.action)) return false;
+  if (['cursor_move', 'selection_clear', 'keyboard_shortcut', 'second_ai_suggestion_presented', 'second_ai_suggestion_inserted', 'ai_guidance_presented', 'ai_guidance_viewed', 'ai_guidance_inserted', 'ai_guidance_ignored', 'ai_guidance_expired', 'ai_guidance_replaced'].includes(log.action)) return false;
   // Keep only response-reading scroll/hover evidence. General navigation noise
   // remains excluded from the Evaluation Agent partition.
   if (log.action === 'scroll') return log.target_section === 'response';

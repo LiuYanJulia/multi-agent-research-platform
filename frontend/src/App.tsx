@@ -138,8 +138,41 @@ function AppContent() {
     navigate('/welcome-practice');
   };
 
-  // Handle start practice task
-  const handleStartPractice = () => {
+  // Groups 2/3 have a single two-minute practice countdown. Its clock begins only
+  // when the participant leaves the welcome page; groups 4/5 keep their existing
+  // two-phase (90 seconds per phase) behavior.
+  const handleStartPractice = async () => {
+    const normalizedGroupId = groupId.trim().toLowerCase();
+    const startsOnPracticePage = ['2', '3', 'hightf_hightm', 'hightf_lowtm'].includes(normalizedGroupId);
+
+    if (startsOnPracticePage) {
+      const practiceTaskStart = Date.now();
+      try {
+        const response = await fetch(`/api/session/${practiceSessionId}/start-practice`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionStartTimestamp: practiceTaskStart }),
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => null);
+          throw new Error(body?.message || `Practice start failed (${response.status})`);
+        }
+      } catch (error) {
+        console.error('Error starting practice timer:', error);
+        window.alert('Unable to start the practice task. Please try again after checking the server connection.');
+        return;
+      }
+
+      setPracticeSessionStartTime(practiceTaskStart);
+      savePersistedState({
+        userId,
+        groupId,
+        practiceSessionId,
+        practiceSessionStartTime: practiceTaskStart,
+        actualSessionId,
+        actualSessionStartTime,
+      });
+    }
     navigate('/practice');
   };
 

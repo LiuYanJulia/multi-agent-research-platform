@@ -38,7 +38,8 @@ interface InterventionPreview {
   source: 'stream' | 'automatic';
 }
 
-const GUIDANCE_PREVIEW_TIMEOUT_MS = 60_000;
+// Gives participants enough time to read a guidance message before it becomes stale.
+const GUIDANCE_PREVIEW_TIMEOUT_MS = 90_000;
 
 // This must stay at module scope.  Defining a memoized component inside
 // ChatInterface creates a new component type on every parent render, which
@@ -87,9 +88,10 @@ function logEvaluationAgentStage(stage: AgentStageEvent): void {
 const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTime, logger, onAgentStage, transcriptChunks = [], speechActivityAt = 0, promptingEnabled = true }) => {
   const [prompt, setPrompt] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
-  const [currentModel, setCurrentModel] = useState('gpt-5-mini'); // Default fallback
+  const [currentModel, setCurrentModel] = useState('gpt-5.6-terra'); // Default fallback
   const [expandedMessageId, setExpandedMessageId] = useState<string | null>(null); // Track which message's expanded section is open
   const [interventionPreview, setInterventionPreview] = useState<InterventionPreview | null>(null);
+  const [guidanceExpanded, setGuidanceExpanded] = useState(false);
   const [insertingIntervention, setInsertingIntervention] = useState(false);
   const [guidanceFlashKey, setGuidanceFlashKey] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -285,14 +287,21 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
 
   const logGuidanceRemoval = useCallback((
     intervention: InterventionPreview,
-    reason: 'expired' | 'replaced',
+    reason: 'expired' | 'replaced' | 'ignored',
     replacementId?: string
   ) => {
     const shownAt = interventionShownAtRef.current;
     logger.logEvent({
       eventType: 'ui',
-      action: reason === 'expired' ? 'ai_guidance_expired' : 'ai_guidance_replaced',
-      target: { element: 'ai-guidance-banner', section: 'prompting' },
+      action: reason === 'expired'
+        ? 'ai_guidance_expired'
+        : reason === 'ignored'
+          ? 'ai_guidance_ignored'
+          : 'ai_guidance_replaced',
+      target: {
+        element: reason === 'ignored' ? 'guidance-ignore-button' : 'ai-guidance-banner',
+        section: 'prompting',
+      },
       metadata: {
         interventionId: intervention.id,
         source: intervention.source,
@@ -304,6 +313,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
     void logger.sendBatch();
   }, [logger]);
 
+  const clearInterventionPreview = useCallback(() => {
+    clearInterventionExpiryTimer();
+    interventionPreviewRef.current = null;
+    interventionShownAtRef.current = null;
+    setGuidanceExpanded(false);
+    setInterventionPreview(null);
+  }, [clearInterventionExpiryTimer]);
+
   const presentIntervention = useCallback((intervention: InterventionPreview) => {
     const previous = interventionPreviewRef.current;
     const isReplacement = previous !== null;
@@ -314,6 +331,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
 
     interventionPreviewRef.current = intervention;
     interventionShownAtRef.current = Date.now();
+    setGuidanceExpanded(false);
     logAiGuidanceToConsole(intervention);
     // These events are persisted through the existing interaction logging endpoint, whose
     // timestamps are relative to the session start just like every other UI interaction.
@@ -339,18 +357,41 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
       interventionPreviewRef.current = null;
       interventionShownAtRef.current = null;
       interventionExpiryTimerRef.current = null;
+      setGuidanceExpanded(false);
       setInterventionPreview(null);
     }, GUIDANCE_PREVIEW_TIMEOUT_MS);
   }, [clearInterventionExpiryTimer, logGuidanceRemoval, logger]);
+
+  const toggleGuidanceDetails = () => {
+    if (!interventionPreview || insertingIntervention) return;
+    const willExpand = !guidanceExpanded;
+    setGuidanceExpanded(willExpand);
+    if (willExpand) {
+      logger.logEvent({
+        eventType: 'ui',
+        action: 'ai_guidance_viewed',
+        target: { element: 'guidance-view-button', section: 'prompting' },
+        metadata: {
+          interventionId: interventionPreview.id,
+          source: interventionPreview.source,
+          suggestionLength: interventionPreview.text.length,
+        },
+      });
+      void logger.sendBatch();
+    }
+  };
+
+  const ignoreIntervention = () => {
+    if (!interventionPreview || insertingIntervention) return;
+    logGuidanceRemoval(interventionPreview, 'ignored');
+    clearInterventionPreview();
+  };
 
   const insertIntervention = async () => {
     if (!interventionPreview || insertingIntervention) return;
     const intervention = interventionPreview;
     setInsertingIntervention(true);
-    clearInterventionExpiryTimer();
-    interventionPreviewRef.current = null;
-    interventionShownAtRef.current = null;
-    setInterventionPreview(null);
+    clearInterventionPreview();
     logger.logEvent({
       eventType: 'ui',
       action: 'ai_guidance_inserted',
@@ -1333,8 +1374,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
           key={interventionPreview.id}
           style={{
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
+            flexDirection: 'column',
             gap: '0.75rem',
             marginBottom: '0.75rem',
             padding: '0.625rem 0.75rem',
@@ -1347,32 +1387,90 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
           }}
           role="status"
         >
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 700 }}>There is guidance from the AI.</div>
-            <div style={{ marginTop: '0.125rem', color: '#047857' }}>
-              {insertingIntervention
-                ? 'Inserting guidance...'
-                : 'Select Insert to follow the guidance in the discussion.'}
+          <div style={{ display: 'flex', width: '100%', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem' }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontWeight: 700 }}>There is guidance from the AI.</div>
+              <div style={{ marginTop: '0.125rem', color: '#047857' }}>
+                {insertingIntervention
+                  ? 'Inserting guidance...'
+                  : 'View the message and choose whether to use it.'}
+              </div>
             </div>
+            <button
+              type="button"
+              onClick={toggleGuidanceDetails}
+              disabled={insertingIntervention}
+              aria-expanded={guidanceExpanded}
+              aria-controls={`guidance-details-${interventionPreview.id}`}
+              style={{
+                flexShrink: 0,
+                padding: '0.375rem 0.75rem',
+                border: '1px solid #059669',
+                borderRadius: '0.375rem',
+                backgroundColor: 'white',
+                color: '#047857',
+                fontSize: '0.8125rem',
+                fontWeight: 600,
+                cursor: insertingIntervention ? 'wait' : 'pointer',
+              }}
+            >
+              {guidanceExpanded ? 'Hide' : 'View'}
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={insertIntervention}
-            disabled={insertingIntervention}
-            style={{
-              flexShrink: 0,
-              padding: '0.375rem 0.75rem',
-              border: '1px solid #059669',
-              borderRadius: '0.375rem',
-              backgroundColor: insertingIntervention ? '#d1fae5' : '#059669',
-              color: insertingIntervention ? '#065f46' : 'white',
-              fontSize: '0.8125rem',
-              fontWeight: 600,
-              cursor: insertingIntervention ? 'wait' : 'pointer',
-            }}
-          >
-            {insertingIntervention ? 'Inserting...' : 'Insert'}
-          </button>
+
+          {guidanceExpanded && (
+            <div
+              id={`guidance-details-${interventionPreview.id}`}
+              style={{
+                width: '100%',
+                boxSizing: 'border-box',
+                padding: '0.75rem',
+                border: '1px solid #a7f3d0',
+                borderRadius: '0.375rem',
+                backgroundColor: 'white',
+              }}
+            >
+              <div style={{ whiteSpace: 'pre-wrap', color: '#065f46', lineHeight: 1.5 }}>
+                {interventionPreview.text}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.75rem' }}>
+                <button
+                  type="button"
+                  onClick={ignoreIntervention}
+                  disabled={insertingIntervention}
+                  style={{
+                    padding: '0.375rem 0.75rem',
+                    border: '1px solid #94a3b8',
+                    borderRadius: '0.375rem',
+                    backgroundColor: 'white',
+                    color: '#334155',
+                    fontSize: '0.8125rem',
+                    fontWeight: 600,
+                    cursor: insertingIntervention ? 'wait' : 'pointer',
+                  }}
+                >
+                  Ignore
+                </button>
+                <button
+                  type="button"
+                  onClick={insertIntervention}
+                  disabled={insertingIntervention}
+                  style={{
+                    padding: '0.375rem 0.75rem',
+                    border: '1px solid #059669',
+                    borderRadius: '0.375rem',
+                    backgroundColor: insertingIntervention ? '#d1fae5' : '#059669',
+                    color: insertingIntervention ? '#065f46' : 'white',
+                    fontSize: '0.8125rem',
+                    fontWeight: 600,
+                    cursor: insertingIntervention ? 'wait' : 'pointer',
+                  }}
+                >
+                  {insertingIntervention ? 'Inserting...' : 'Insert'}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1382,6 +1480,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
         data-interaction-section="response"
         style={{
           flex: '1',
+          minHeight: 0,
           overflowY: 'auto',
           overflowX: 'hidden',
           marginBottom: '1rem',
@@ -1422,15 +1521,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
         <div className="bg-token-bg-primary shadow-short"
              style={{
                cursor: 'text',
-               overflow: 'hidden',
                padding: '0.625rem',
-               borderRadius: '28px',
+               borderRadius: '16px',
                display: 'grid',
-               gridTemplateColumns: '1fr auto'
+               gridTemplateColumns: '1fr auto',
+               alignItems: 'end'
              }}>
 
           {/* Primary (Text Input) */}
-          <div style={{ display: 'flex', alignItems: 'center', padding: '0 0.75rem' }}>
+          <div style={{ display: 'flex', alignItems: 'stretch', padding: '0 0.75rem' }}>
             <textarea
               ref={textareaRef}
               value={prompt}
@@ -1441,18 +1540,21 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
               rows={1}
               style={{
                 width: '100%',
-                resize: 'none',
+                // The native vertical resize handle lets participants review longer prompts.
+                resize: 'vertical',
                 outline: 'none',
                 backgroundColor: 'transparent',
                 border: 'none',
                 minHeight: '1.5rem',
-                maxHeight: '200px'
+                maxHeight: '40vh',
+                boxSizing: 'border-box',
+                overflowY: 'auto'
               }}
             />
           </div>
 
           {/* Trailing (Send button) */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.5rem' }}>
             <button
               type="submit"
               disabled={!prompt.trim()}

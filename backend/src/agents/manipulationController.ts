@@ -297,7 +297,7 @@ async function generateGuidance(
     return { text: fallback, mode, modelUsed: null, usedFallback: false };
   }
 
-  const model = process.env.GUIDANCE_MODEL_ID || process.env.OPENAI_MODEL || 'gpt-4o-mini';
+  const model = process.env.GUIDANCE_MODEL_ID || process.env.OPENAI_MODEL || 'gpt-5.6-terra';
   if (!process.env.OPENAI_API_KEY) {
     return { text: fallback, mode, modelUsed: model, usedFallback: true };
   }
@@ -310,12 +310,13 @@ async function generateGuidance(
   try {
     const completion = await withTimeout(getOpenAI().chat.completions.create({
       model,
+      reasoning_effort: 'low',
       messages: [
         { role: 'system', content: GUIDANCE_SYSTEM_PROMPTS[policyKey(spec.targetOrientation, spec.magnitude)] },
         { role: 'user', content: userPrompt },
       ],
-      temperature: 0.55,
-      max_tokens: 220,
+      // Includes low-effort reasoning plus the short, participant-facing guidance.
+      max_completion_tokens: 450,
     }), 10_000);
     const text = conciseGuidance(completion.choices[0]?.message?.content ?? '');
     return guidanceMeetsContract(text, spec)

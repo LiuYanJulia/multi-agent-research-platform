@@ -6,6 +6,10 @@ import { AgentStageEvent, runTurnPipeline, runIncrementalPipeline, logMainRespon
 
 const router = express.Router();
 
+const MAIN_RESPONSE_SYSTEM_PROMPT = `You are a collaborative product-design research assistant helping a participant design a creative adult learning platform. The participant may ask you to explore the design space, conduct lightweight research using general knowledge, analyze users and needs, generate and compare concepts, identify trade-offs and risks, structure a product proposal, or revise and polish their writing.
+
+Give practical, specific, product-manager-level help focused on adult learners, learning goals, features, user journeys, user experience, and evaluation. Encourage creative but feasible thinking. Do not claim to have browsed, verified, or cited external sources unless the participant provided those sources in the conversation. When facts are uncertain, label them as assumptions or suggestions. Do not focus on implementation code or technical architecture unless the participant explicitly asks. Match the participant's language. Ask concise follow-up questions only when needed; otherwise provide a useful, self-contained answer.`;
+
 // Trigger a cursor-based analysis for speech/idle thresholds without requiring a chat Send.
 router.post('/analyze', async (req, res) => {
   const { sessionId, trigger } = req.body;
@@ -96,16 +100,18 @@ router.post('/send', async (req, res) => {
 
     // Call OpenAI API with conversation context
     const openai = getOpenAI();
-    const modelName = process.env.OPENAI_MODEL || 'gpt-4o';
+    const modelName = process.env.OPENAI_MODEL || 'gpt-5.6-terra';
     const mainStart = new Date();
     const completion = await openai.chat.completions.create({
       model: modelName,
+      reasoning_effort: 'low',
+      verbosity: 'low',
       messages: [
-        { role: 'system', content: 'You are a helpful assistant. Provide clear, helpful responses to user questions.' },
+        { role: 'system', content: MAIN_RESPONSE_SYSTEM_PROMPT },
         ...messages
       ],
-      max_tokens: 1000,
-      temperature: 0.7,
+      // This cap includes hidden reasoning tokens as well as the visible reply.
+      max_completion_tokens: 1_500,
     });
     const mainEnd = new Date();
 
@@ -157,7 +163,7 @@ router.post('/stream', async (req, res) => {
   let streamStarted = false;
   const { sessionId, message, conversationHistory = [], skipPipeline = false } = req.body;
   const db = (req as any).db;
-  const modelName = process.env.OPENAI_MODEL || 'gpt-4o';
+  const modelName = process.env.OPENAI_MODEL || 'gpt-5.6-terra';
 
   // Check if this is a practice session (declare at function scope)
   const isPractice = isPracticeSession(sessionId);
@@ -257,12 +263,14 @@ router.post('/stream', async (req, res) => {
     mainStart = new Date();
     const stream = await openai.chat.completions.create({
       model: modelName,
+      reasoning_effort: 'low',
+      verbosity: 'low',
       messages: [
-        { role: 'system', content: 'You are a helpful assistant. Provide clear, helpful responses to user questions.' },
+        { role: 'system', content: MAIN_RESPONSE_SYSTEM_PROMPT },
         ...messages
       ],
-      max_tokens: 1000,
-      temperature: 0.7,
+      // This cap includes hidden reasoning tokens as well as the visible reply.
+      max_completion_tokens: 1_500,
       stream: true,
     });
 
@@ -478,15 +486,17 @@ router.post('/', async (req, res) => {
 
     // Call OpenAI API with conversation context
     const openai = getOpenAI();
-    const modelName = process.env.OPENAI_MODEL || 'gpt-4o';
+    const modelName = process.env.OPENAI_MODEL || 'gpt-5.6-terra';
     const completion = await openai.chat.completions.create({
       model: modelName,
+      reasoning_effort: 'low',
+      verbosity: 'low',
       messages: [
-        { role: 'system', content: 'You are a helpful assistant. Provide clear, helpful responses to user questions.' },
+        { role: 'system', content: MAIN_RESPONSE_SYSTEM_PROMPT },
         ...messages
       ],
-      max_tokens: 1000,
-      temperature: 0.7,
+      // This cap includes hidden reasoning tokens as well as the visible reply.
+      max_completion_tokens: 1_500,
     });
 
     const assistantMessage = completion.choices[0]?.message?.content || 'Sorry, I could not generate a response.';
@@ -621,9 +631,11 @@ router.post('/generate-from-transcript', async (req, res) => {
     }
 
     const openai = getOpenAI();
-    const modelName = process.env.OPENAI_MODEL || 'gpt-4o';
+    const modelName = process.env.OPENAI_MODEL || 'gpt-5.6-terra';
     const completion = await openai.chat.completions.create({
       model: modelName,
+      reasoning_effort: 'low',
+      verbosity: 'low',
       messages: [
         {
           role: 'system',
@@ -634,8 +646,8 @@ router.post('/generate-from-transcript', async (req, res) => {
           content: `Based on this transcript, please suggest some questions or prompts to help explore these ideas further:\n\n"${transcript}"`
         }
       ],
-      max_tokens: 500,
-      temperature: 0.7,
+      // This cap includes hidden reasoning tokens as well as the visible suggestions.
+      max_completion_tokens: 700,
     });
 
     const suggestions = completion.choices[0]?.message?.content || 'Could not generate suggestions.';
@@ -753,7 +765,7 @@ router.post('/feedback', async (req, res) => {
 router.get('/model-info', async (req, res) => {
   try {
     res.json({
-      model: process.env.OPENAI_MODEL || 'gpt-4o',
+      model: process.env.OPENAI_MODEL || 'gpt-5.6-terra',
       provider: 'openai',
       timestamp: new Date().toISOString(),
     });

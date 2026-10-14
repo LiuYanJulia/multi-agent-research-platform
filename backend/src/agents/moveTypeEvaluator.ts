@@ -272,11 +272,12 @@ async function evaluateFallback(partition: TimelineEvent[], userMessageForFallba
   }
   try {
     const completion = await withTimeout(getOpenAI().chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: 'gpt-5.6-terra',
+      reasoning_effort: 'low',
       messages: [{ role: 'system', content: STUB_SYSTEM_PROMPT }, { role: 'user', content: content.slice(0, 1_000) }],
       response_format: { type: 'json_object' },
-      temperature: 0,
-      max_tokens: 100,
+      // Includes low-effort reasoning plus the small JSON fallback result.
+      max_completion_tokens: 250,
     }), timeoutMs);
     const raw = completion.choices[0]?.message?.content ?? '{}';
     const parsed = (() => { try { return JSON.parse(raw) as Record<string, unknown>; } catch { return {}; } })();
@@ -285,7 +286,7 @@ async function evaluateFallback(partition: TimelineEvent[], userMessageForFallba
     const description = typeof parsed.description === 'string'
       ? conciseDescription(parsed.description, fallbackDescription(content))
       : fallbackDescription(content);
-    return { moves: removeUngroundedContentMoves([...asks, ...responses, { moveType, orientation: MOVE_TYPE_ORIENTATION[moveType], description }], partition), raw, usedFallback: true, durationMs: Date.now() - start, retryCount: 0, modelUsed: 'gpt-4o-mini (fallback)' };
+    return { moves: removeUngroundedContentMoves([...asks, ...responses, { moveType, orientation: MOVE_TYPE_ORIENTATION[moveType], description }], partition), raw, usedFallback: true, durationMs: Date.now() - start, retryCount: 0, modelUsed: 'gpt-5.6-terra (fallback)' };
   } catch (error) {
     return { moves: removeUngroundedContentMoves([...asks, ...responses, { moveType: 1, orientation: 'D', description: fallbackDescription(content) }], partition), raw: { error: error instanceof Error ? error.message : String(error) }, usedFallback: true, durationMs: Date.now() - start, retryCount: 0, modelUsed: 'deterministic fallback' };
   }
