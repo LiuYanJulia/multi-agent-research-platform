@@ -59,7 +59,7 @@ const MAX_UNCOMMITTED_SPEECH_MS = 4000;
 // on session.update for the same reason the model/delay fields are resent (belt-and-suspenders
 // in case the data channel opens before the backend's /session config is fully applied).
 const TRANSCRIPTION_PROMPT =
-  'A user is collaborating with an AI chatbot to create an adult learning platform proposal.';
+  'A user is collaborating with an AI chatbot to create a helpful, creative career-development learning platform proposal for adults.';
 
 interface PendingSpeechSegment {
   timestampStart: number; // absolute epoch ms - see comment on the backend route for why
@@ -147,6 +147,14 @@ const WebRTCTranscript = forwardRef<WebRTCTranscriptRef, WebRTCTranscriptProps>(
     }
 
     const speechStartOffset = localSpeechStartOffsetRef.current ?? Date.now() - recordingStartTimeRef.current;
+    const bufferedDurationMs = Date.now() - recordingStartTimeRef.current - speechStartOffset;
+    if (bufferedDurationMs < 100) {
+      // Realtime rejects empty/tiny commits. It is a harmless local-VAD race, not a
+      // participant-facing recording failure.
+      hasUncommittedSpeechRef.current = false;
+      localSpeechStartOffsetRef.current = null;
+      return;
+    }
     manualCommitStartQueueRef.current.push(speechStartOffset);
     dataChannel.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
 
@@ -477,7 +485,12 @@ const WebRTCTranscript = forwardRef<WebRTCTranscriptRef, WebRTCTranscriptProps>(
             }
           } else if (message.type === 'error') {
             console.error(`${sessionLabel} OpenAI error:`, message);
-            setError(message.error?.message || 'Unknown error from OpenAI');
+            const errorMessage = message.error?.message || 'Unknown error from OpenAI';
+            if (/committing input audio buffer: buffer too small/i.test(errorMessage)) {
+              console.warn(`${sessionLabel} Ignoring nonfatal short audio-buffer commit.`);
+            } else {
+              setError(errorMessage);
+            }
           }
           // Log other message types for debugging (but not the common ones)
           else if (!['session.created', 'session.updated', 'input_audio_buffer.speech_started', 'input_audio_buffer.speech_stopped', 'input_audio_buffer.committed', 'conversation.item.created', 'response.created', 'response.done', 'conversation.item.input_audio_transcription.delta'].includes(message.type)) {

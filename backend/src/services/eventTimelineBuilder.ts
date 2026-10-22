@@ -285,6 +285,17 @@ function narrateHover(logs: NormalizedLog[]): string | null {
   return details.length ? `User ${details.join(', ')}` : null;
 }
 
+function narrateSelection(logs: NormalizedLog[]): string {
+  // selectionchange fires repeatedly as a range grows. The final log carries
+  // the completed selection, which is the relevant evidence for evaluation.
+  const selectionLogs = logs.filter((log) => log.action === 'text_select');
+  const last = selectionLogs[selectionLogs.length - 1] ?? logs[logs.length - 1];
+  const selected = text(last.metadataObject.selectedText).trim();
+  const count = Number(last.metadataObject.textLength) || selected.length;
+  const messageId = last.metadataObject.messageId;
+  return `User selected ${count} character(s) in ${sectionFor(last)} section${messageId != null ? ` (Message ID: ${messageId})` : ''}${selected ? `: '${selected}'` : ''}`;
+}
+
 function narrateUi(logs: NormalizedLog[]): string {
   const first = logs[0];
   if (logs.some((log) => log.action === 'composer_interaction')) {
@@ -307,15 +318,11 @@ function narrateBehavior(behavior: Behavior): string | null {
   const first = logs[0];
   if (categories.has('typing') || categories.has('deleting')) return narrateText(logs, categories.has('key_press'));
   if (behavior.category === 'clipboard') return narrateClipboard(logs);
+  if (categories.has('selecting')) return narrateSelection(logs);
   if (behavior.category === 'hovering') return narrateHover(logs);
   if (behavior.category === 'scrolling') {
     const direction = text(first.metadataObject.scrollDirection);
     return `User read AI response by scrolling${direction && direction !== 'none' ? ` ${direction}` : ''} in response section`;
-  }
-  if (behavior.category === 'selecting') {
-    const selected = text(first.metadataObject.selectedText);
-    const count = Number(first.metadataObject.textLength) || selected.length;
-    return `User selected ${count} character(s) in ${sectionFor(first)} section${first.metadataObject.messageId != null ? ` (Message ID: ${first.metadataObject.messageId})` : ''}${selected ? `: '${selected}'` : ''}`;
   }
   if (behavior.category === 'ui_interaction') return narrateUi(logs);
   if (behavior.category === 'key_press') return text(first.metadataObject.key) === 'CapsLock' ? null : normalizeUiReferences(`User pressed '${text(first.metadataObject.key) || 'Unknown'}' key in ${elementFor(first)} (${sectionFor(first)} section)`);
@@ -471,7 +478,7 @@ export interface TimelineRowsInput {
   recordingStartEpochMs?: number | null;
   interactionLogs: InteractionLog[];
   speechSegments: Array<{ id: number; timestamp_start: number; timestamp_end: number; transcription: string | null }>;
-  messages: Array<{ id: number; role: 'user' | 'assistant'; content: string; is_guidance?: boolean | number; timestamp: string | Date }>;
+  messages: Array<{ id: number; role: 'user' | 'assistant' | 'ai_guidance'; content: string; is_guidance?: boolean | number; guidance_direction?: string | null; guidance_previous_ideas?: unknown; guidance_display_at?: string | Date | null; timestamp: string | Date }>;
   // Context only: this row was already consumed by the message source cursor
   // and is never emitted again. It lets a newly-arrived assistant response keep
   // the conventional +1s placement after its preceding user message.
@@ -523,18 +530,26 @@ export function buildTimelineEventsFromRows(input: TimelineRowsInput): TimelineE
     : new Date(input.previousUserMessageTimestamp).getTime();
   if (!Number.isFinite(precedingUserTimestamp)) precedingUserTimestamp = null;
   for (const row of input.messages) {
-    if (row.is_guidance) continue;
-    const sourceTimestamp = new Date(row.timestamp).getTime();
+    // Historic inserted guidance rows were user messages and remain excluded. New
+    // direct cards are distinct analysis records but are AI responses in the timeline.
+    if (row.is_guidance && row.role !== 'ai_guidance') continue;
+    const sourceTimestamp = new Date(row.role === 'ai_guidance' && row.guidance_display_at ? row.guidance_display_at : row.timestamp).getTime();
     if (!Number.isFinite(sourceTimestamp)) continue;
     if (row.role === 'user') {
       precedingUserTimestamp = sourceTimestamp;
       pending.push({ timestampStart: sourceTimestamp, timestampEnd: sourceTimestamp, eventType: 'user_message', actionDescription: '', speech: '', userMessage: text(row.content), aiResponse: '' });
       continue;
     }
+    const previousIdeas = row.guidance_previous_ideas
+      ? (typeof row.guidance_previous_ideas === 'string' ? JSON.parse(row.guidance_previous_ideas) : row.guidance_previous_ideas)
+      : [];
+    const timelineContent = row.role === 'ai_guidance'
+      ? [row.guidance_direction, Array.isArray(previousIdeas) && previousIdeas.length ? `Previous ideas: ${previousIdeas.join(', ')}` : '', row.content].filter(Boolean).join('\n\n')
+      : text(row.content);
     // This is a presentation timestamp applied after source-row selection.
     // It must not affect source cursor movement or which rows are evaluated.
     const timelineTimestamp = precedingUserTimestamp == null ? sourceTimestamp + 1_000 : precedingUserTimestamp + 1_000;
-    pending.push({ timestampStart: timelineTimestamp, timestampEnd: timelineTimestamp, eventType: 'ai_response', actionDescription: '', speech: '', userMessage: '', aiResponse: text(row.content) });
+    pending.push({ timestampStart: timelineTimestamp, timestampEnd: timelineTimestamp, eventType: 'ai_response', actionDescription: '', speech: '', userMessage: '', aiResponse: timelineContent });
   }
 
   let nextEventId = input.nextEventId ?? 1;
@@ -608,7 +623,7 @@ async function materializeTimelineDeltaOnce(db: SqlExecutor, sessionId: string, 
   const [logRows, speechRows, messageRows, priorUserRows] = await Promise.all([
     db.execute('SELECT id, event_type, action, target_element, target_section, text_content, metadata, timestamp FROM interaction_logs WHERE session_id = ? AND id > ? ORDER BY id ASC', [sessionId, cursors.get('interaction_logs') ?? 0]),
     db.execute('SELECT id, timestamp_start, timestamp_end, transcription FROM speech_segments WHERE session_id = ? AND id > ? ORDER BY id ASC', [sessionId, cursors.get('speech_segments') ?? 0]),
-    db.execute('SELECT id, role, content, is_guidance, timestamp FROM messages WHERE session_id = ? AND id > ? ORDER BY id ASC', [sessionId, messageCursor]),
+    db.execute('SELECT id, role, content, is_guidance, guidance_direction, guidance_previous_ideas, guidance_display_at, timestamp FROM messages WHERE session_id = ? AND id > ? ORDER BY id ASC', [sessionId, messageCursor]),
     messageCursor > 0
       ? db.execute("SELECT timestamp FROM messages WHERE session_id = ? AND role = 'user' AND id <= ? ORDER BY id DESC LIMIT 1", [sessionId, messageCursor])
       : Promise.resolve([[]]),

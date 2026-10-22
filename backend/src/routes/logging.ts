@@ -8,7 +8,7 @@ import { inspectSessionMetadata, sessionMetadataDiagnostic } from '../services/s
 const router = express.Router();
 
 // Valid event types for the database ENUM
-const VALID_EVENT_TYPES = ['mouse', 'keyboard', 'ui', 'api', 'session', 'selection'];
+const VALID_EVENT_TYPES = ['mouse', 'keyboard', 'ui', 'api', 'session', 'selection', 'ai_guidance'];
 
 // Helper function to normalize and validate event type
 function normalizeEventType(eventType: string | undefined): string {

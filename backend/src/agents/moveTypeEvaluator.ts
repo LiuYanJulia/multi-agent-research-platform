@@ -41,20 +41,20 @@ PHASE 1: Extract the interaction skeleton.
 
 PHASE 2: Segment remaining events.
 - Generate (1): the user creates a new idea independently, including think-aloud or original writing.
-- Evaluate (3): the user explicitly reviews or assesses content. A user_action saying the participant viewed or read an AI response, including scrolling in the response section, is an explicit Evaluate move; make one Evaluate move for that coherent reading episode. Do not infer an Evaluate move merely because an AI response arrived or a participant paused.
-- Adopt (4): use this type ONLY for verifiable incorporation into the writing section. There must be either (a) a user_action explicitly saying the participant copied from an AI response and pasted into the writing section, or (b) text typed/pasted into the writing section that clearly repeats or paraphrases a supplied ai_response. Mere intention to use an idea, verbal agreement or praise (for example, "that's good"), viewing, reading, selecting, or copying alone is NOT Adopt.
+- Evaluate (3): the user explicitly reviews or assesses content. Hovering with a message ID or in the response section, and selecting response text, are high-signal response-engagement evidence. Treat behavior as an Evaluate episode only when the timeline's response-engagement evidence check says that at least two hover/text-select events occurred within 10 seconds, and both refer to the response section or a message ID. When participant speech immediately precedes or follows qualifying evaluation evidence, classify the speech and engagement together as Evaluate rather than Generate. Do not infer an Evaluate move merely because an AI response arrived or a participant paused.
+- Adopt (4): use this type ONLY for verifiable incorporation into the writing section. There must be either (a) events that explicitly show actions copied from an AI response and pasted into the writing section, or (b) text typed/pasted into the writing section that clearly repeats or paraphrases a supplied ai_response. Mere intention to use an idea, verbal agreement or praise (for example, "that's good"), viewing, reading, selecting, or copying alone is NOT Adopt.
 - Reject (6): the user explicitly dismisses a suggestion, deletes writing, disagrees, or proposes a contradictory direction. Uncertainty, silence, greetings, filler speech, or a contribution that lacks a clear idea are NOT rejection.
 - It is valid to return no content moves when the participant has not supplied a substantive idea, action, assessment, adoption, or rejection. Never invent a content move to make the array non-empty.
 
 Reading versus independent speech:
-- When response-reading user_action evidence is present, treat speech that merely repeats or closely paraphrases the nearby ai_response as reading, not as a new Generate move.
-- Reading evidence alone supports Evaluate; it does not create Generate or Adopt. Speech such as "that's good" while reading is Evaluate at most, never Adopt unless the timeline separately contains the required writing-incorporation evidence.
+- Response-engagement evidence for behavioral Evaluate includes only hovering over or selecting text in the response section or with a message ID. Only the qualifying two-event evidence check supports behavioral Evaluate. When it qualifies, treat speech that merely repeats, closely paraphrases, or explicitly considers a nearby AI-response idea as Evaluate, not as a new Generate move.
+- A qualifying response-engagement episode supports Evaluate; it does not create Generate or Adopt. Speech such as "that's good" during a qualifying episode is Evaluate at most, never Adopt unless the timeline separately contains the required writing-incorporation evidence.
 
 ${DESCRIPTION_REQUIREMENTS}
 
 Use chronological order. A move should represent one coherent idea or action; do not create tiny moves for incidental actions. Return ONLY a JSON array (an empty array is allowed). Each object must have sequential move_id, a specific description, and move_type (an integer from 1 to 6).`;
 
-const STUB_SYSTEM_PROMPT = `You are a fallback classifier for a design-ideation participant contribution. Classify it as exactly one of generate, evaluate, adopt, or reject. ${DESCRIPTION_REQUIREMENTS} Return only JSON: {"classification":"generate","description":"Participant proposes a career-advice platform for adults aged 25 to 40."}.`;
+const STUB_SYSTEM_PROMPT = `You are a fallback classifier for a design-ideation timeline. Classify it as exactly one of generate, evaluate, adopt, or reject. Hovering with a message ID or in the response section, and selecting response text, are high-signal Evaluate evidence. Treat behavior as Evaluate evidence only when the supplied evidence check says at least two hover/text-select events occurred within 10 seconds and both refer to the response section or a message ID. If nearby speech considers, repeats, or develops an idea contained in a nearby AI response during that qualifying episode, classify it as evaluate rather than generate. Classify as adopt only when events explicitly show text copied from an AI response or response section and pasted into the writing section, or when writing text clearly repeats or paraphrases a supplied AI response. Classify as generate when the participant introduces an independent idea without qualifying response-engagement or writing-incorporation evidence. ${DESCRIPTION_REQUIREMENTS} Return only JSON: {"classification":"generate","description":"Participant proposes a career-advice platform for adults aged 25 to 40."}.`;
 const CLASSIFICATION_TO_MOVE_TYPE: Record<string, number> = { generate: 1, evaluate: 3, adopt: 4, reject: 6 };
 const MAX_DESCRIPTION_WORDS = 25;
 const CONTENT_MOVE_TYPES = new Set([1, 3, 4, 6]);
@@ -101,7 +101,60 @@ function quotedParticipantText(actionDescription: string): string[] {
 }
 
 function isResponseReadingAction(actionDescription: string): boolean {
-  return /\b(?:read|viewed) AI response\b/i.test(actionDescription);
+  return /\b(?:hover(?:ed)?|hover_start|selected|text_select)\b/i.test(actionDescription)
+    && /\bresponse section\b|\bmessage id\b/i.test(actionDescription);
+}
+
+type ResponseEvidenceCategory = 'hover' | 'selection';
+interface ResponseEvidence {
+  eventId: number;
+  timestamp: number;
+  category: ResponseEvidenceCategory;
+}
+
+const RESPONSE_EVIDENCE_WINDOW_MS = 10_000;
+const REQUIRED_RESPONSE_EVIDENCE_EVENTS = 2;
+
+function responseEvidenceCategory(actionDescription: string): ResponseEvidenceCategory | null {
+  // Evidence must be traceable to the response section or a particular message.
+  if (!/\bresponse section\b|\bmessage id\b/i.test(actionDescription)) return null;
+  if (/\bhover(?:ed)?\b|\bhover_start\b/i.test(actionDescription)) return 'hover';
+  if (/\bselected\b|\btext_select\b/i.test(actionDescription)) return 'selection';
+  return null;
+}
+
+function responseEvidence(partition: TimelineEvent[]): ResponseEvidence[] {
+  return partition.flatMap((event) => {
+    if (event.eventType !== 'user_action') return [];
+    const category = responseEvidenceCategory(event.actionDescription);
+    return category ? [{ eventId: event.eventId, timestamp: event.timestampStart, category }] : [];
+  });
+}
+
+function qualifyingResponseEvidence(partition: TimelineEvent[]): ResponseEvidence[] | null {
+  const evidence = responseEvidence(partition);
+  for (let start = 0; start < evidence.length; start += 1) {
+    const window = evidence.filter((item) => item.timestamp >= evidence[start].timestamp && item.timestamp - evidence[start].timestamp <= RESPONSE_EVIDENCE_WINDOW_MS);
+    if (window.length >= REQUIRED_RESPONSE_EVIDENCE_EVENTS) return window;
+  }
+  return null;
+}
+
+function responseEvidenceSummary(partition: TimelineEvent[]): string {
+  const qualifying = qualifyingResponseEvidence(partition);
+  if (qualifying) {
+    const details = qualifying.map((item) => `${item.category} (Event #${item.eventId})`).join(', ');
+    return `QUALIFIES: ${details}. At least ${REQUIRED_RESPONSE_EVIDENCE_EVENTS} hover/text-select events occurred within ${RESPONSE_EVIDENCE_WINDOW_MS / 1000} seconds, each tied to the response section or a message ID.`;
+  }
+  const evidence = responseEvidence(partition);
+  return evidence.length
+    ? `DOES NOT QUALIFY: ${evidence.map((item) => `${item.category} (Event #${item.eventId})`).join(', ')}. Behavioral evidence alone cannot support Evaluate.`
+    : 'NO QUALIFYING RESPONSE-ENGAGEMENT EVIDENCE.';
+}
+
+function hasExplicitEvaluationLanguage(partition: TimelineEvent[]): boolean {
+  const participantText = partition.flatMap((event) => [event.speech, event.userMessage]).join(' ').toLowerCase();
+  return /\b(?:prefer|better|worse|fits?|suitable|unsuitable|like|dislike|useful|unhelpful|pros?|cons?|trade[ -]?offs?|compar(?:e|ing)|rather than|choos(?:e|ing)|reject(?:ing)?)\b/.test(participantText);
 }
 
 function writingTextFromAction(actionDescription: string): string[] {
@@ -130,7 +183,7 @@ function hasWritingIncorporationEvidence(partition: TimelineEvent[]): boolean {
   );
   if (directCopyPaste) return true;
 
-  const copiedFromResponse = descriptions.some((description) => /\bcopied\b.*\bfrom AI response\b/i.test(description));
+  const copiedFromResponse = descriptions.some((description) => /\bcopied\b.*\bfrom (?:AI response|response section)\b/i.test(description));
   const pastedIntoWriting = descriptions.some((description) => /\bpasted\b.*\binto writing section\b/i.test(description));
   if (copiedFromResponse && pastedIntoWriting) return true;
 
@@ -180,9 +233,12 @@ function removeUngroundedContentMoves(moves: EvaluatedMove[], partition: Timelin
   const contentGrounded = hasSubstantiveParticipantContent(partition)
     ? moves
     : moves.filter((move) => !CONTENT_MOVE_TYPES.has(move.moveType));
-  return hasWritingIncorporationEvidence(partition)
+  const evaluationGrounded = hasExplicitEvaluationLanguage(partition) || qualifyingResponseEvidence(partition) !== null;
+  const adoptionGrounded = hasWritingIncorporationEvidence(partition)
     ? contentGrounded
     : contentGrounded.filter((move) => move.moveType !== 4);
+  return adoptionGrounded
+    .filter((move) => move.moveType !== 3 || evaluationGrounded);
 }
 
 function toMoves(value: unknown[] | null, partition: TimelineEvent[]): EvaluatedMove[] | null {
@@ -223,7 +279,7 @@ function countsMatch(moves: EvaluatedMove[], partition: TimelineEvent[]): boolea
 
 /** The exact non-system prompt supplied for one Evaluation Agent model call. */
 export function buildEvaluationUserPrompt(partition: TimelineEvent[], correction = ''): string {
-  return `Analyze this design timeline partition.\n\nTimeline data:\n${JSON.stringify(partition)}${correction}`;
+  return `Analyze this design timeline partition.\n\nResponse-engagement evidence check:\n${responseEvidenceSummary(partition)}\n\nTimeline data:\n${JSON.stringify(partition)}${correction}`;
 }
 
 function fallbackUserMessages(partition: TimelineEvent[], userMessageForFallback: string): string[] {
@@ -232,10 +288,12 @@ function fallbackUserMessages(partition: TimelineEvent[], userMessageForFallback
 }
 
 function fallbackContent(partition: TimelineEvent[], userMessageForFallback: string): string {
-  const contributions = partition.flatMap((event) => [event.userMessage, event.speech])
-    .map((content) => content.trim())
-    .filter(Boolean);
-  if (contributions.length > 0) return contributions.join(' ');
+  const contributions = partition.flatMap((event) => [
+    event.actionDescription ? `Action: ${event.actionDescription}` : '',
+    event.speech ? `Speech: ${event.speech}` : '',
+    event.userMessage ? `User message: ${event.userMessage}` : '',
+  ]).map((content) => content.trim()).filter(Boolean);
+  if (contributions.length > 0) return `Response-engagement evidence check: ${responseEvidenceSummary(partition)}\n\n${contributions.join('\n')}`;
   return userMessageForFallback.trim();
 }
 

@@ -4,7 +4,7 @@ import { AgentStageEvent } from './DebugPanel';
 
 interface Message {
   id: string;
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'ai_guidance';
   content: string;
   timestamp: Date;
   modelSlug?: string;
@@ -13,7 +13,10 @@ interface Message {
   isLoading?: boolean; // Track loading state for assistant messages
   referencedMessageId?: string; // ID of the message this is referring to
   referencedMessageContent?: string; // Preview content of referenced message
-  isGuidance?: boolean; // Paper 2: AI guidance message (distinct chat bubble)
+  isGuidance?: boolean; // compatibility with historical Insert records
+  guidanceDirection?: string;
+  guidancePreviousIdeas?: string[];
+  guidanceDisplayAt?: Date;
 }
 
 interface ChatInterfaceProps {
@@ -32,30 +35,41 @@ interface ChatInterfaceProps {
   promptingEnabled?: boolean;
 }
 
-interface InterventionPreview {
-  id: string;
-  text: string;
-  source: 'stream' | 'automatic';
+interface DirectGuidancePayload {
+  messageId: number;
+  directionGuidance: string;
+  previousIdeas: string[];
+  response: string;
+  displayAt: string;
+  guidanceResponseInput?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
 }
-
-// Gives participants enough time to read a guidance message before it becomes stale.
-const GUIDANCE_PREVIEW_TIMEOUT_MS = 90_000;
 
 // This must stay at module scope.  Defining a memoized component inside
 // ChatInterface creates a new component type on every parent render, which
 // unmounts the response DOM and breaks an in-progress text selection.
-const MemoizedMarkdown = memo(({ content }: { content: string }) => (
-  <ReactMarkdown>{content}</ReactMarkdown>
-));
+const MemoizedMarkdown = memo(({ content }: { content: string }) => {
+  const lines = content.split('\n');
+  const blocks: React.ReactNode[] = [];
+  let plain: string[] = [];
+  const flushPlain = () => {
+    if (plain.length) blocks.push(<ReactMarkdown key={`markdown-${blocks.length}`}>{plain.join('\n')}</ReactMarkdown>);
+    plain = [];
+  };
+  const cells = (line: string) => line.trim().replace(/^\||\|$/g, '').split('|').map((cell) => cell.trim());
+  for (let index = 0; index < lines.length;) {
+    const isTable = index + 1 < lines.length && lines[index].includes('|') && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(lines[index + 1]);
+    if (!isTable) { plain.push(lines[index]); index += 1; continue; }
+    flushPlain();
+    const header = cells(lines[index]);
+    index += 2;
+    const body: string[][] = [];
+    while (index < lines.length && lines[index].includes('|') && lines[index].trim()) { body.push(cells(lines[index])); index += 1; }
+    blocks.push(<div key={`table-${blocks.length}`} style={{ overflowX: 'auto', margin: '0.75rem 0' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}><thead><tr>{header.map((cell, cellIndex) => <th key={cellIndex} style={{ textAlign: 'left', padding: '0.45rem', borderBottom: '1px solid #86efac' }}>{cell}</th>)}</tr></thead><tbody>{body.map((row, rowIndex) => <tr key={rowIndex}>{header.map((_, cellIndex) => <td key={cellIndex} style={{ verticalAlign: 'top', padding: '0.45rem', borderBottom: '1px solid #d1fae5' }}>{row[cellIndex] ?? ''}</td>)}</tr>)}</tbody></table></div>);
+  }
+  flushPlain();
+  return <>{blocks}</>;
+});
 MemoizedMarkdown.displayName = 'MemoizedMarkdown';
-
-// Keep the complete guidance visible to researchers even when a participant never selects Insert.
-function logAiGuidanceToConsole(guidance: { id?: string; text: string; source: string }): void {
-  console.groupCollapsed(`[AI guidance] ${guidance.source}`);
-  console.log('Guidance ID:', guidance.id ?? 'not provided');
-  console.log('Message:', guidance.text);
-  console.groupEnd();
-}
 
 // The Debug Panel is the primary transcript viewer. Keep the browser console
 // focused on the evaluator's audit trail instead of printing every speech chunk.
@@ -87,13 +101,12 @@ function logEvaluationAgentStage(stage: AgentStageEvent): void {
 
 const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTime, logger, onAgentStage, transcriptChunks = [], speechActivityAt = 0, promptingEnabled = true }) => {
   const [prompt, setPrompt] = useState('');
+  const [composerHeight, setComposerHeight] = useState(40);
   const [messages, setMessages] = useState<Message[]>([]);
   const [currentModel, setCurrentModel] = useState('gpt-5.6-terra'); // Default fallback
   const [expandedMessageId, setExpandedMessageId] = useState<string | null>(null); // Track which message's expanded section is open
-  const [interventionPreview, setInterventionPreview] = useState<InterventionPreview | null>(null);
-  const [guidanceExpanded, setGuidanceExpanded] = useState(false);
-  const [insertingIntervention, setInsertingIntervention] = useState(false);
-  const [guidanceFlashKey, setGuidanceFlashKey] = useState(0);
+  const [pendingGuidance, setPendingGuidance] = useState<DirectGuidancePayload | null>(null);
+  const [guidanceCountdown, setGuidanceCountdown] = useState<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -105,18 +118,36 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
   const analysisInFlightRef = useRef(false);
   const idleAnalysisTimerRef = useRef<number | null>(null);
   const continuousAnalysisTimerRef = useRef<number | null>(null);
-  const interventionPreviewRef = useRef<InterventionPreview | null>(null);
-  const interventionShownAtRef = useRef<number | null>(null);
-  const interventionExpiryTimerRef = useRef<number | null>(null);
 
-  // Auto-scroll helper - currently disabled
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const autoScrollToBottom = (_behavior: ScrollBehavior = 'smooth') => {
-    // Completely disable auto-scroll to test if it's causing selection issues
-    return;
+  const scrollToBlockStart = (id: string) => {
+    requestAnimationFrame(() => {
+      const container = messagesContainerRef.current;
+      const block = document.getElementById(`chat-block-${id}`);
+      if (!container || !block) return;
+      container.scrollTo({ top: Math.max(0, block.offsetTop - container.offsetTop), behavior: 'smooth' });
+    });
   };
 
-  const copyToClipboard = (text: string, messageId: string, messageRole: 'user' | 'assistant', messageIndex: number) => {
+  const beginComposerResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = textareaRef.current?.getBoundingClientRect().height ?? composerHeight;
+    const maxHeight = Math.max(72, Math.floor((window.innerHeight - 250) / 3));
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      // The handle sits above the composer: pulling it upward expands the input
+      // while the composer bottom remains anchored at the bottom of the chat pane.
+      const nextHeight = Math.max(40, Math.min(maxHeight, startHeight + startY - moveEvent.clientY));
+      setComposerHeight(nextHeight);
+    };
+    const onPointerUp = () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    };
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp, { once: true });
+  };
+
+  const copyToClipboard = (text: string, messageId: string, messageRole: Message['role'], messageIndex: number) => {
     navigator.clipboard.writeText(text);
     // Log copy action
     logger.logEvent({
@@ -242,13 +273,25 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
           content: msg.content,
           timestamp: new Date(msg.timestamp),
           modelSlug: msg.modelSlug,
-          isGuidance: !!msg.isGuidance
+          isGuidance: !!msg.isGuidance,
+          guidanceDirection: msg.guidanceDirection,
+          guidancePreviousIdeas: msg.guidancePreviousIdeas,
+          guidanceDisplayAt: msg.guidanceDisplayAt ? new Date(msg.guidanceDisplayAt) : undefined,
         }));
 
-        // Sort messages by timestamp to ensure proper conversation order
-        loadedMessages.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+        const deferredGuidance = loadedMessages.find((message) => message.role === 'ai_guidance' && message.guidanceDisplayAt && message.guidanceDisplayAt.getTime() > Date.now());
+        if (deferredGuidance?.guidanceDisplayAt) {
+          setPendingGuidance({
+            messageId: Number(String(deferredGuidance.id).replace('guidance-', '')),
+            directionGuidance: deferredGuidance.guidanceDirection ?? '', previousIdeas: deferredGuidance.guidancePreviousIdeas ?? [],
+            response: deferredGuidance.content, displayAt: deferredGuidance.guidanceDisplayAt.toISOString(),
+          });
+        }
+        // Sort messages by timestamp to ensure proper conversation order.
+        const visibleMessages = deferredGuidance ? loadedMessages.filter((message) => message !== deferredGuidance) : loadedMessages;
+        visibleMessages.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
-        setMessages(loadedMessages);
+        setMessages(visibleMessages);
         console.log(`Loaded ${loadedMessages.length} messages from chat history for session ${sessionId}`);
       }
     } catch (error) {
@@ -278,149 +321,30 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
-  const clearInterventionExpiryTimer = useCallback(() => {
-    if (interventionExpiryTimerRef.current !== null) {
-      window.clearTimeout(interventionExpiryTimerRef.current);
-      interventionExpiryTimerRef.current = null;
-    }
-  }, []);
-
-  const logGuidanceRemoval = useCallback((
-    intervention: InterventionPreview,
-    reason: 'expired' | 'replaced' | 'ignored',
-    replacementId?: string
-  ) => {
-    const shownAt = interventionShownAtRef.current;
-    logger.logEvent({
-      eventType: 'ui',
-      action: reason === 'expired'
-        ? 'ai_guidance_expired'
-        : reason === 'ignored'
-          ? 'ai_guidance_ignored'
-          : 'ai_guidance_replaced',
-      target: {
-        element: reason === 'ignored' ? 'guidance-ignore-button' : 'ai-guidance-banner',
-        section: 'prompting',
-      },
-      metadata: {
-        interventionId: intervention.id,
-        source: intervention.source,
-        reason,
-        ...(replacementId ? { replacementInterventionId: replacementId } : {}),
-        displayedDurationMs: shownAt === null ? null : Date.now() - shownAt,
-      },
-    });
-    void logger.sendBatch();
-  }, [logger]);
-
-  const clearInterventionPreview = useCallback(() => {
-    clearInterventionExpiryTimer();
-    interventionPreviewRef.current = null;
-    interventionShownAtRef.current = null;
-    setGuidanceExpanded(false);
-    setInterventionPreview(null);
-  }, [clearInterventionExpiryTimer]);
-
-  const presentIntervention = useCallback((intervention: InterventionPreview) => {
-    const previous = interventionPreviewRef.current;
-    const isReplacement = previous !== null;
-    if (previous) {
-      clearInterventionExpiryTimer();
-      logGuidanceRemoval(previous, 'replaced', intervention.id);
-    }
-
-    interventionPreviewRef.current = intervention;
-    interventionShownAtRef.current = Date.now();
-    setGuidanceExpanded(false);
-    logAiGuidanceToConsole(intervention);
-    // These events are persisted through the existing interaction logging endpoint, whose
-    // timestamps are relative to the session start just like every other UI interaction.
-    logger.logEvent({
-      eventType: 'ui',
-      action: 'ai_guidance_presented',
-      target: { element: 'ai-guidance-banner', section: 'prompting' },
-      metadata: {
-        interventionId: intervention.id,
-        source: intervention.source,
-        suggestionLength: intervention.text.length,
-      },
-    });
-    void logger.sendBatch();
-    setInterventionPreview(intervention);
-    // A replacement is a new, current suggestion. Keying the banner below restarts
-    // this finite animation so it flashes exactly twice without stacking banners.
-    setGuidanceFlashKey((previousKey) => isReplacement ? previousKey + 1 : 0);
-    interventionExpiryTimerRef.current = window.setTimeout(() => {
-      // Ignore an old timer after its notification has been replaced or inserted.
-      if (interventionPreviewRef.current?.id !== intervention.id) return;
-      logGuidanceRemoval(intervention, 'expired');
-      interventionPreviewRef.current = null;
-      interventionShownAtRef.current = null;
-      interventionExpiryTimerRef.current = null;
-      setGuidanceExpanded(false);
-      setInterventionPreview(null);
-    }, GUIDANCE_PREVIEW_TIMEOUT_MS);
-  }, [clearInterventionExpiryTimer, logGuidanceRemoval, logger]);
-
-  const toggleGuidanceDetails = () => {
-    if (!interventionPreview || insertingIntervention) return;
-    const willExpand = !guidanceExpanded;
-    setGuidanceExpanded(willExpand);
-    if (willExpand) {
-      logger.logEvent({
-        eventType: 'ui',
-        action: 'ai_guidance_viewed',
-        target: { element: 'guidance-view-button', section: 'prompting' },
-        metadata: {
-          interventionId: interventionPreview.id,
-          source: interventionPreview.source,
-          suggestionLength: interventionPreview.text.length,
-        },
-      });
-      void logger.sendBatch();
-    }
-  };
-
-  const ignoreIntervention = () => {
-    if (!interventionPreview || insertingIntervention) return;
-    logGuidanceRemoval(interventionPreview, 'ignored');
-    clearInterventionPreview();
-  };
-
-  const insertIntervention = async () => {
-    if (!interventionPreview || insertingIntervention) return;
-    const intervention = interventionPreview;
-    setInsertingIntervention(true);
-    clearInterventionPreview();
-    logger.logEvent({
-      eventType: 'ui',
-      action: 'ai_guidance_inserted',
-      target: { element: 'guidance-insert-button', section: 'prompting' },
-      metadata: {
-        interventionId: intervention.id,
-        source: intervention.source,
-        suggestionLength: intervention.text.length,
-      },
-    });
-    try {
-      // Flush before saving guidance so the interaction log records the exact choice time.
-      await logger.sendBatch();
-      const guidanceMessage: Message = {
-        id: `guidance-${Date.now()}`,
-        role: 'user',
-        content: intervention.text,
-        timestamp: new Date(),
-        isGuidance: true,
+  useEffect(() => {
+    if (!pendingGuidance) return;
+    const displayAt = new Date(pendingGuidance.displayAt).getTime();
+    const updateCountdown = () => setGuidanceCountdown(Math.max(0, Math.ceil((displayAt - Date.now()) / 1000)));
+    updateCountdown();
+    const interval = window.setInterval(updateCountdown, 250);
+    const timer = window.setTimeout(() => {
+      logger.logEvent({ eventType: 'ai_guidance', action: 'ai_guidance_notification_completed', target: { element: 'ai-guidance-banner', section: 'prompting' }, metadata: { messageId: pendingGuidance.messageId } });
+      const card: Message = {
+        id: `guidance-${pendingGuidance.messageId}`,
+        role: 'ai_guidance', content: pendingGuidance.response, timestamp: new Date(displayAt),
+        guidanceDirection: pendingGuidance.directionGuidance,
+        guidancePreviousIdeas: pendingGuidance.previousIdeas,
+        guidanceDisplayAt: new Date(displayAt),
       };
-      setMessages((previous) => [...previous, guidanceMessage]);
-      await saveChatMessage(guidanceMessage);
-      await handleSend(undefined, intervention.text, true, true);
-    } catch (error) {
-      console.error('Failed to insert AI guidance:', error);
-    } finally {
-      setInsertingIntervention(false);
-    }
-  };
+      setMessages((existing) => existing.some((message) => message.id === card.id) ? existing : [...existing, card]);
+      logger.logEvent({ eventType: 'ai_guidance', action: 'ai_guidance_displayed', target: { element: 'ai-guidance-card', section: 'response', text: `${pendingGuidance.directionGuidance}\n\nPrevious ideas: ${pendingGuidance.previousIdeas.join(', ')}\n\n${pendingGuidance.response}` }, metadata: { messageId: pendingGuidance.messageId, displayDelayMs: 5000, directionGuidance: pendingGuidance.directionGuidance, previousIdeas: pendingGuidance.previousIdeas, responseLength: pendingGuidance.response.length } });
+      void logger.sendBatch();
+      setPendingGuidance(null);
+      setGuidanceCountdown(null);
+      scrollToBlockStart(card.id);
+    }, Math.max(0, displayAt - Date.now()));
+    return () => { window.clearInterval(interval); window.clearTimeout(timer); };
+  }, [logger, pendingGuidance]);
 
   const handleSend = async (contextMessageId?: string, customPrompt?: string, hideUserPrompt?: boolean, isGuidanceMessage = false) => {
     if (!promptingEnabled && !isGuidanceMessage) return;
@@ -495,7 +419,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
       setMessages(prev => [...prev, loadingMessage]);
 
       // Auto-scroll to bottom of messages container only (not the entire page)
-      setTimeout(() => autoScrollToBottom('smooth'), 100);
+      setTimeout(() => scrollToBlockStart(loadingMessageId), 100);
 
       try {
         // Call the streaming chat API
@@ -547,36 +471,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
                     // Paper 2 test mode: forward to the debug panel, if one is listening.
                     logEvaluationAgentStage(data.agentStage as AgentStageEvent);
                     onAgentStage?.(data.agentStage);
-                  } else if (data.intervention) {
-                    setInsertingIntervention(false);
-                    setMessages((previous) => previous.filter((message) => message.id !== loadingMessageId));
-                    presentIntervention({
-                      id: data.intervention.id,
-                      text: data.intervention.text,
-                      source: 'stream',
-                    });
-                  } else if (data.guidance) {
-                    // Paper 2: Manipulation Controller intervened this turn — insert its
-                    // guidance as a distinct chat bubble, positioned before the assistant's
-                    // reply (which streams in next).
-                    logAiGuidanceToConsole({
-                      id: data.guidance.messageId,
-                      text: data.guidance.text,
-                      source: 'streamed guidance message',
-                    });
-                    setInterventionPreview(null);
-                    const guidanceMessage: Message = {
-                      id: data.guidance.messageId ? `guidance-${data.guidance.messageId}` : `guidance-${Date.now()}`,
-                      role: 'user',
-                      content: data.guidance.text,
-                      timestamp: new Date(),
-                      isGuidance: true,
-                    };
-                    setMessages(prev => {
-                      const idx = prev.findIndex(msg => msg.id === loadingMessageId);
-                      if (idx === -1) return [...prev, guidanceMessage];
-                      return [...prev.slice(0, idx), guidanceMessage, ...prev.slice(idx)];
-                    });
                   } else if (data.error) {
                     // Handle error with optional partial content
                     if (data.interrupted && data.partialContent) {
@@ -620,7 +514,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
                     });
 
                     // Auto-scroll to bottom (skip if user has text selected)
-                    requestAnimationFrame(() => autoScrollToBottom('auto'));
+                    requestAnimationFrame(() => scrollToBlockStart(loadingMessageId));
                   }
                 } catch (parseError) {
                   console.error('Error parsing SSE data:', parseError);
@@ -703,8 +597,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
           continuousAnalysisTimerRef.current = null;
         }
       }
-      if (data.intervention) {
-        presentIntervention({ ...data.intervention, source: 'automatic' });
+      if (data.guidance) {
+        const guidance = data.guidance as DirectGuidancePayload;
+        logger.logEvent({
+          eventType: 'ai_guidance', action: 'ai_guidance_notification_shown',
+          target: { element: 'ai-guidance-banner', section: 'prompting' },
+          metadata: { messageId: guidance.messageId, displayAt: guidance.displayAt, displayDelayMs: 5000 },
+        });
+        void logger.sendBatch();
+        setPendingGuidance(guidance);
       }
     } catch (error) {
       console.error('Automatic manipulation analysis failed:', error);
@@ -719,7 +620,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
     } finally {
       analysisInFlightRef.current = false;
     }
-  }, [logger, onAgentStage, presentIntervention, sessionId]);
+  }, [logger, onAgentStage, sessionId]);
 
   useEffect(() => {
     if (transcriptChunks.length <= analyzedTranscriptCountRef.current) return;
@@ -747,8 +648,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
 
   useEffect(() => () => {
     if (continuousAnalysisTimerRef.current !== null) window.clearTimeout(continuousAnalysisTimerRef.current);
-    clearInterventionExpiryTimer();
-  }, [clearInterventionExpiryTimer]);
+  }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (!promptingEnabled) return;
@@ -997,6 +897,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
   const renderMessageBubble = (message: Message, turnIndex: number, messageIndex: number, messagePromptingEnabled: boolean) => (
     <article
       key={message.id}
+      id={`chat-block-${message.id}`}
       className="text-token-text-primary group"
       data-turn-id={message.id}
       data-message-index={messageIndex}
@@ -1034,35 +935,26 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
                 whiteSpace: 'normal'
               }}
             >
-              {message.isGuidance ? (
-                /* Paper 2: AI guidance — distinct pale-green bubble with label,
-                   centered rather than right-aligned like a normal user bubble, so it visibly stands apart. */
-                <div style={{ display: 'flex', width: '100%', justifyContent: 'center' }}>
+              {message.role === 'ai_guidance' ? (
+                <div style={{ display: 'flex', width: '100%', justifyContent: 'flex-start' }}>
                   <div style={{
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: '0.375rem',
                     width: '100%',
-                    maxWidth: '85%',
+                    maxWidth: '92%',
                     backgroundColor: '#ecfdf5',
                     border: '1px solid #a7f3d0',
                     borderRadius: '12px',
                     padding: '0.75rem 1rem'
                   }}>
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.375rem',
-                      fontSize: '0.6875rem',
-                      fontWeight: 700,
-                      color: '#047857',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.04em'
-                    }}>
-                      <span>AI guidance</span>
-                    </div>
                     <div style={{ whiteSpace: 'pre-wrap', color: '#065f46', fontSize: '0.9375rem', lineHeight: '1.5' }}>
-                      {message.content}
+                      {message.guidanceDirection}
+                    </div>
+                    <div style={{ marginTop: '0.9rem', fontSize: '0.78rem', color: '#38856b' }}>
+                      [Previous ideas: {(message.guidancePreviousIdeas ?? []).join(', ')}]
+                    </div>
+                    <div className="markdown prose" style={{ color: '#064e3b', fontSize: '0.9375rem', lineHeight: '1.5', marginTop: '0.9rem', overflowX: 'auto' }}>
+                      <MemoizedMarkdown content={message.content} />
                     </div>
                   </div>
                 </div>
@@ -1364,127 +1256,40 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
   );
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', padding: '1rem' }}>
+    <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', padding: '1rem', boxSizing: 'border-box', overflow: 'hidden' }}>
+      {pendingGuidance && guidanceCountdown !== null && (
+        <div
+          role="status"
+          style={{
+            width: '100%',
+            boxSizing: 'border-box',
+            marginBottom: '0.75rem',
+            padding: '0.625rem 0.875rem',
+            borderRadius: '0.5rem',
+            backgroundColor: '#ecfdf5',
+            border: '1px solid #6ee7b7',
+            color: '#065f46',
+            fontSize: '0.8125rem',
+            fontWeight: 600,
+          }}
+        >
+          AI guidance will appear in {guidanceCountdown}s
+        </div>
+      )}
       <h2 style={{ fontSize: '1.125rem', fontWeight: '600', marginBottom: '1rem' }} className="text-token-text-primary">
         LLM Chat Interface
       </h2>
-
-      {interventionPreview && (
-        <div
-          key={interventionPreview.id}
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '0.75rem',
-            marginBottom: '0.75rem',
-            padding: '0.625rem 0.75rem',
-            backgroundColor: '#ecfdf5',
-            border: '1px solid #6ee7b7',
-            borderRadius: '0.5rem',
-            color: '#065f46',
-            fontSize: '0.8125rem',
-            animation: guidanceFlashKey > 0 ? 'guidance-notification-flash 450ms ease-in-out 2' : undefined,
-          }}
-          role="status"
-        >
-          <div style={{ display: 'flex', width: '100%', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem' }}>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontWeight: 700 }}>There is guidance from the AI.</div>
-              <div style={{ marginTop: '0.125rem', color: '#047857' }}>
-                {insertingIntervention
-                  ? 'Inserting guidance...'
-                  : 'View the message and choose whether to use it.'}
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={toggleGuidanceDetails}
-              disabled={insertingIntervention}
-              aria-expanded={guidanceExpanded}
-              aria-controls={`guidance-details-${interventionPreview.id}`}
-              style={{
-                flexShrink: 0,
-                padding: '0.375rem 0.75rem',
-                border: '1px solid #059669',
-                borderRadius: '0.375rem',
-                backgroundColor: 'white',
-                color: '#047857',
-                fontSize: '0.8125rem',
-                fontWeight: 600,
-                cursor: insertingIntervention ? 'wait' : 'pointer',
-              }}
-            >
-              {guidanceExpanded ? 'Hide' : 'View'}
-            </button>
-          </div>
-
-          {guidanceExpanded && (
-            <div
-              id={`guidance-details-${interventionPreview.id}`}
-              style={{
-                width: '100%',
-                boxSizing: 'border-box',
-                padding: '0.75rem',
-                border: '1px solid #a7f3d0',
-                borderRadius: '0.375rem',
-                backgroundColor: 'white',
-              }}
-            >
-              <div style={{ whiteSpace: 'pre-wrap', color: '#065f46', lineHeight: 1.5 }}>
-                {interventionPreview.text}
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.75rem' }}>
-                <button
-                  type="button"
-                  onClick={ignoreIntervention}
-                  disabled={insertingIntervention}
-                  style={{
-                    padding: '0.375rem 0.75rem',
-                    border: '1px solid #94a3b8',
-                    borderRadius: '0.375rem',
-                    backgroundColor: 'white',
-                    color: '#334155',
-                    fontSize: '0.8125rem',
-                    fontWeight: 600,
-                    cursor: insertingIntervention ? 'wait' : 'pointer',
-                  }}
-                >
-                  Ignore
-                </button>
-                <button
-                  type="button"
-                  onClick={insertIntervention}
-                  disabled={insertingIntervention}
-                  style={{
-                    padding: '0.375rem 0.75rem',
-                    border: '1px solid #059669',
-                    borderRadius: '0.375rem',
-                    backgroundColor: insertingIntervention ? '#d1fae5' : '#059669',
-                    color: insertingIntervention ? '#065f46' : 'white',
-                    fontSize: '0.8125rem',
-                    fontWeight: 600,
-                    cursor: insertingIntervention ? 'wait' : 'pointer',
-                  }}
-                >
-                  {insertingIntervention ? 'Inserting...' : 'Insert'}
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Chat Messages Area */}
       <div
         ref={messagesContainerRef}
         data-interaction-section="response"
         style={{
-          flex: '1',
+          flex: '1 1 0',
           minHeight: 0,
           overflowY: 'auto',
           overflowX: 'hidden',
           marginBottom: '1rem',
-          maxHeight: 'calc(100vh - 250px)',
           overscrollBehavior: 'contain'
         }}
       >
@@ -1514,7 +1319,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
 
       {/* Composer Interface */}
       {promptingEnabled ? <form
-        style={{ width: '100%' }}
+        style={{ width: '100%', flexShrink: 0, marginTop: 'auto' }}
         data-type="unified-composer"
         onSubmit={(e) => { e.preventDefault(); handleSend(); }}
       >
@@ -1523,12 +1328,29 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
                cursor: 'text',
                padding: '0.625rem',
                borderRadius: '16px',
-               display: 'grid',
-               gridTemplateColumns: '1fr auto',
-               alignItems: 'end'
+               display: 'flex',
+               flexDirection: 'column'
              }}>
-
-          {/* Primary (Text Input) */}
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Drag upward to enlarge the message input"
+            onPointerDown={beginComposerResize}
+            style={{
+              height: '12px',
+              margin: '-0.375rem 0 0.25rem',
+              cursor: 'ns-resize',
+              touchAction: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            title="Drag upward to enlarge the message input"
+          >
+            <span style={{ width: '2.75rem', height: '3px', borderRadius: '999px', backgroundColor: '#cbd5e1' }} />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'end' }}>
+            {/* Primary (Text Input) */}
           <div style={{ display: 'flex', alignItems: 'stretch', padding: '0 0.75rem' }}>
             <textarea
               ref={textareaRef}
@@ -1540,13 +1362,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
               rows={1}
               style={{
                 width: '100%',
-                // The native vertical resize handle lets participants review longer prompts.
-                resize: 'vertical',
+                resize: 'none',
                 outline: 'none',
                 backgroundColor: 'transparent',
                 border: 'none',
                 minHeight: '1.5rem',
-                maxHeight: '40vh',
+                height: `${composerHeight}px`,
+                maxHeight: `${Math.max(72, Math.floor((window.innerHeight - 250) / 3))}px`,
                 boxSizing: 'border-box',
                 overflowY: 'auto'
               }}
@@ -1585,6 +1407,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
                 <path d="M.5 1.163A1 1 0 0 1 1.97.28l12.868 6.837a1 1 0 0 1 0 1.766L1.969 15.72A1 1 0 0 1 .5 14.836V10.33a1 1 0 0 1 .816-.983L8.5 8 1.316 6.653A1 1 0 0 1 .5 5.67V1.163Z"/>
               </svg>
             </button>
+          </div>
           </div>
         </div>
       </form> : (

@@ -3,7 +3,7 @@ import mysql from 'mysql2/promise';
 import { evaluateTimelinePartition, EvaluationResult, hasSubstantiveParticipantContent } from '../agents/moveTypeEvaluator';
 import { decideCurrentOrientation, DecisionContextMove, DecisionResult } from '../agents/decisionAgent';
 import { buildSessionTimeline, TimelineEvent, unevaluatedTail } from './eventTimelineBuilder';
-import { runManipulationController, getManipulationState, EvaluatedMove, ControllerInstruction, MOVE_TYPE_NAMES } from '../agents/manipulationController';
+import { runManipulationController, getManipulationState, EvaluatedMove, ControllerInstruction, guidanceGenerationDebugInput, MOVE_TYPE_NAMES } from '../agents/manipulationController';
 
 type SqlExecutor = Pick<mysql.Pool, 'execute'>;
 
@@ -11,6 +11,7 @@ export interface PipelineResult {
   ran: boolean;
   instruction?: ControllerInstruction;
   guidanceText?: string;
+  guidance?: ControllerInstruction['guidance'];
   turnIndex?: number;
 }
 
@@ -38,6 +39,15 @@ export interface AgentStageEvent {
   // Test-mode diagnostic output from the model/parser, including a fallback
   // reason when no model response was available.
   evaluationRaw?: unknown;
+  /** Exact prompt payload supplied to the guidance-generation LLM for an intervention. */
+  guidanceGenerationInput?: {
+    systemPrompt: string;
+    runtimeInput: string;
+    selectedMoveDescriptions: Array<{ moveId: number; moveType: number; orientation: 'D' | 'C'; description: string }>;
+    recentWritingContext: Array<{ type: 'added' | 'removed' | 'revised'; content: string }>;
+  };
+  /** Exact messages supplied to generate the visible AI-response portion of a guidance card. */
+  guidanceResponseInput?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
   moves?: DebugMove[];
   moveCounts?: { d: number; c: number };
   streak?: { orientation: 'D' | 'C' | null; count: number; suppressionRemaining?: number };
@@ -416,6 +426,7 @@ async function runTurnPipelineOnce(
       targetMagnitude: instruction.targetMagnitude,
       specification: instruction.guidanceSpec,
       visibleGuidanceMessage: instruction.guidanceText,
+      structuredGuidance: instruction.guidance,
     },
     stateBefore: state,
     stateAfter: updatedState,
@@ -437,12 +448,15 @@ async function runTurnPipelineOnce(
       count: updatedState?.streak_count ?? 0,
       suppressionRemaining: Number(updatedState?.streak_suppression_remaining ?? 0),
     },
+    guidanceGenerationInput: instruction.guidanceSpec
+      ? guidanceGenerationDebugInput(instruction.guidanceSpec)
+      : undefined,
     timestamp: Date.now(),
   });
 
   // Delivery is intentionally owned by chat.ts. Guidance becomes a chat message only
   // after the participant explicitly selects Insert in the persistent prompt.
-  return { ran: true, instruction, guidanceText: instruction.guidanceText, turnIndex };
+  return { ran: true, instruction, guidanceText: instruction.guidanceText, guidance: instruction.guidance, turnIndex };
 }
 
 /** Analyze all new events since the durable per-session cursor, without requiring a chat Send. */

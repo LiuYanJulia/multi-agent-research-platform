@@ -1,14 +1,67 @@
 import express from 'express';
 import OpenAI from 'openai';
-import { v4 as uuidv4 } from 'uuid';
-import { isPracticeSession, isTestSession } from '../utils/sessionUtils';
-import { AgentStageEvent, runTurnPipeline, runIncrementalPipeline, logMainResponseTurn, OnStage } from '../services/manipulationPipeline';
+import { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+import { isPracticeSession } from '../utils/sessionUtils';
+import { AgentStageEvent, runIncrementalPipeline, logMainResponseTurn } from '../services/manipulationPipeline';
 
 const router = express.Router();
 
-const MAIN_RESPONSE_SYSTEM_PROMPT = `You are a collaborative product-design research assistant helping a participant design a creative adult learning platform. The participant may ask you to explore the design space, conduct lightweight research using general knowledge, analyze users and needs, generate and compare concepts, identify trade-offs and risks, structure a product proposal, or revise and polish their writing.
+const MAIN_RESPONSE_SYSTEM_PROMPT = `You are a collaborative product-design research assistant helping a participant design a helpful and creative adult learning platform for career development. The participant may ask you to explore the design space, conduct lightweight research using general knowledge, analyze users and needs, generate and compare concepts, identify trade-offs and risks, structure a product proposal, or revise and polish their writing.
 
-Give practical, specific, product-manager-level help focused on adult learners, learning goals, features, user journeys, user experience, and evaluation. Encourage creative but feasible thinking. Do not claim to have browsed, verified, or cited external sources unless the participant provided those sources in the conversation. When facts are uncertain, label them as assumptions or suggestions. Do not focus on implementation code or technical architecture unless the participant explicitly asks. Match the participant's language. Ask concise follow-up questions only when needed; otherwise provide a useful, self-contained answer.`;
+Give practical, specific, product-manager-level help focused on adult career-development learners, learning goals, features, user journeys, user experience, and evaluation. Encourage creative but feasible thinking. Do not claim to have browsed, verified, or cited external sources unless the participant provided those sources in the conversation. When facts are uncertain, label them as assumptions or suggestions. Do not focus on implementation code or technical architecture unless the participant explicitly asks. Match the participant's language. Ask concise follow-up questions only when needed; otherwise provide a useful, self-contained answer.`;
+
+/** Practice responses intentionally use the participant's prompt and conversation only. */
+function mainResponseSystemMessages(sessionId: string): ChatCompletionMessageParam[] {
+  return isPracticeSession(sessionId)
+    ? []
+    : [{ role: 'system', content: MAIN_RESPONSE_SYSTEM_PROMPT }];
+}
+
+async function createDirectGuidancePayload(db: any, sessionId: string, result: any) {
+  const guidance = result.instruction?.guidance;
+  if (!guidance) return null;
+  const modelName = process.env.OPENAI_MODEL || 'gpt-5.6-terra';
+  const [rows] = await db.execute('SELECT role, content FROM messages WHERE session_id = ? ORDER BY timestamp ASC', [sessionId]);
+  const context: ChatCompletionMessageParam[] = (rows as any[]).map((row): ChatCompletionMessageParam => ({
+    role: row.role === 'user' ? 'user' : 'assistant',
+    content: String(row.content ?? ''),
+  }));
+  const responseMessages: ChatCompletionMessageParam[] = [
+    ...mainResponseSystemMessages(sessionId),
+    ...context,
+    { role: 'user', content: guidance.promptForResponse },
+  ];
+  const guidanceResponseInput = responseMessages.map((message) => ({
+    role: message.role === 'system' || message.role === 'user' ? message.role : 'assistant' as const,
+    content: typeof message.content === 'string' ? message.content : JSON.stringify(message.content),
+  }));
+  const startedAt = new Date();
+  const completion = await getOpenAI().chat.completions.create({
+    model: modelName,
+    reasoning_effort: 'low',
+    verbosity: 'low',
+    messages: responseMessages,
+    max_completion_tokens: 900,
+  });
+  const response = completion.choices[0]?.message?.content?.trim();
+  if (!response) throw new Error('Direct guidance response was empty');
+  const displayAt = new Date(Date.now() + 5_000);
+  const [insert] = await db.execute(
+    `INSERT INTO messages (session_id, role, content, model_slug, is_guidance, guidance_direction, guidance_previous_ideas, guidance_display_at)
+     VALUES (?, 'ai_guidance', ?, ?, FALSE, ?, ?, ?)`,
+    [sessionId, response, modelName, guidance.directionGuidance, JSON.stringify(guidance.previousIdeas), displayAt]
+  );
+  if (result.turnIndex !== undefined) {
+    await logMainResponseTurn(db, sessionId, result.turnIndex, {
+      input: { directGuidance: guidance, messages: guidanceResponseInput }, output: response, modelUsed: modelName,
+      startedAt, completedAt: new Date(), status: 'success',
+    });
+  }
+  return {
+    messageId: Number((insert as any).insertId), directionGuidance: guidance.directionGuidance,
+    previousIdeas: guidance.previousIdeas, response, displayAt: displayAt.toISOString(), guidanceResponseInput,
+  };
+}
 
 // Trigger a cursor-based analysis for speech/idle thresholds without requiring a chat Send.
 router.post('/analyze', async (req, res) => {
@@ -20,13 +73,20 @@ router.post('/analyze', async (req, res) => {
   const stages: AgentStageEvent[] = [];
   try {
     const result = await runIncrementalPipeline(db, sessionId, (stage) => stages.push(stage), typeof trigger === 'string' ? trigger : undefined);
+    const guidance = result.instruction?.intervened ? await createDirectGuidancePayload(db, sessionId, result) : null;
+    if (guidance) {
+      stages.push({
+        agent: 'main_response_agent', status: 'completed',
+        detail: 'Generated the AI-response portion of the guidance card.',
+        guidanceResponseInput: guidance.guidanceResponseInput,
+        timestamp: Date.now(),
+      });
+    }
     return res.json({
       ran: result.ran,
       trigger,
       stages,
-      intervention: result.instruction?.intervened && result.guidanceText
-        ? { id: uuidv4(), text: result.guidanceText }
-        : null,
+      guidance,
     });
   } catch (error) {
     console.error('Automatic manipulation analysis failed:', error);
@@ -59,26 +119,6 @@ router.post('/send', async (req, res) => {
       );
     }
 
-    // Paper 2: run Move-Type Evaluation Agent + Manipulation Controller for this turn.
-    // No-op (returns { ran: false }) for sessions without a manipulation_state row, so
-    // legacy/practice sessions are completely unaffected. Must run BEFORE fetching
-    // history below, so a guidance message it inserts is included in this turn's context.
-    let pipelineResult: Awaited<ReturnType<typeof runTurnPipeline>> = { ran: false };
-    if (db) {
-      try {
-        pipelineResult = await runTurnPipeline(db, sessionId, message);
-      } catch (pipelineError) {
-        console.error('Manipulation pipeline error (continuing without it):', pipelineError);
-      }
-    }
-
-    if (db && pipelineResult.ran && pipelineResult.instruction?.intervened && pipelineResult.guidanceText) {
-      return res.json({
-        intervention: { id: uuidv4(), text: pipelineResult.guidanceText },
-        model: null,
-        timestamp: new Date().toISOString(),
-      });
-    }
 
     // Get conversation history from database (user message already saved by frontend)
     let messages = [];
@@ -88,7 +128,7 @@ router.post('/send', async (req, res) => {
         [sessionId]
       );
       messages = (rows as any[]).map(row => ({
-        role: row.role,
+        role: row.role === 'user' ? 'user' : 'assistant',
         content: row.content
       }));
     }
@@ -101,19 +141,17 @@ router.post('/send', async (req, res) => {
     // Call OpenAI API with conversation context
     const openai = getOpenAI();
     const modelName = process.env.OPENAI_MODEL || 'gpt-5.6-terra';
-    const mainStart = new Date();
     const completion = await openai.chat.completions.create({
       model: modelName,
       reasoning_effort: 'low',
       verbosity: 'low',
       messages: [
-        { role: 'system', content: MAIN_RESPONSE_SYSTEM_PROMPT },
+        ...mainResponseSystemMessages(sessionId),
         ...messages
       ],
       // This cap includes hidden reasoning tokens as well as the visible reply.
       max_completion_tokens: 1_500,
     });
-    const mainEnd = new Date();
 
     const assistantMessage = completion.choices[0]?.message?.content || 'Sorry, I could not generate a response.';
 
@@ -126,21 +164,6 @@ router.post('/send', async (req, res) => {
     }
 
     // Paper 2: log Main Response Agent execution + deterministic AI-Response move
-    if (db && pipelineResult.ran && pipelineResult.turnIndex !== undefined) {
-      try {
-        await logMainResponseTurn(db, sessionId, pipelineResult.turnIndex, {
-          input: { messages },
-          output: assistantMessage,
-          modelUsed: modelName,
-          startedAt: mainStart,
-          completedAt: mainEnd,
-          status: 'success',
-        });
-      } catch (logError) {
-        console.error('Failed to log main_response_agent execution:', logError);
-      }
-    }
-
     res.json({
       message: assistantMessage,
       model: modelName,
@@ -168,10 +191,6 @@ router.post('/stream', async (req, res) => {
   // Check if this is a practice session (declare at function scope)
   const isPractice = isPracticeSession(sessionId);
 
-  // Paper 2: pipeline result + main-agent timing, declared at function scope so both
-  // the success path and the error/interruption paths below can log against it.
-  let pipelineResult: Awaited<ReturnType<typeof runTurnPipeline>> = { ran: false };
-  let mainStart = new Date();
 
   try {
     if (!sessionId || !message) {
@@ -186,9 +205,7 @@ router.post('/stream', async (req, res) => {
       );
     }
 
-    // Set headers for SSE (Server-Sent Events). Moved up (before the pipeline call below) so a
-    // test-mode session (see isTestSession) can stream agentStage debug events live, as the
-    // pipeline is still running, rather than only being able to send them after it completes.
+    // Set headers for SSE before calling the main model so the response begins immediately.
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
@@ -200,44 +217,8 @@ router.post('/stream', async (req, res) => {
     (res as any).socket?.setNoDelay(true);
     (res as any).socket?.setTimeout(0);
 
-    // Paper 2 (2026-09) test mode: stream agent execution stages to the frontend debug panel
-    // (see PAPER2_MANIPULATION_PLAN.md section 11) as they happen. Gated server-side on
-    // isTestSession so a real participant's session never pays for these extra SSE writes.
-    const isTestMode = isTestSession(sessionId);
-    const onStage: OnStage | undefined = isTestMode
-      ? (stage) => {
-          try {
-            res.write(`data: ${JSON.stringify({ agentStage: stage, done: false })}\n\n`);
-          } catch (writeError) {
-            console.error('Failed to write agentStage debug event:', writeError);
-          }
-        }
-      : undefined;
-
-    // Paper 2: run Move-Type Evaluation Agent + Manipulation Controller for this turn.
-    // No-op (returns { ran: false }) for sessions without a manipulation_state row.
-    if (db && !skipPipeline) {
-      try {
-        pipelineResult = await runTurnPipeline(db, sessionId, message, onStage);
-      } catch (pipelineError) {
-        console.error('Manipulation pipeline error (continuing without it):', pipelineError);
-      }
-    }
-
-    // A qualifying Controller instruction is shown as a persistent client-side prompt.
-    // The participant explicitly chooses Insert; only that action saves the guidance and
-    // begins the Main Response Agent turn.
-    if (db && pipelineResult.ran && pipelineResult.instruction?.intervened && pipelineResult.guidanceText) {
-      res.write(`data: ${JSON.stringify({
-        intervention: {
-          id: uuidv4(),
-          text: pipelineResult.guidanceText,
-        },
-        done: false,
-      })}\n\n`);
-      res.write(`data: ${JSON.stringify({ content: '', done: true })}\n\n`);
-      return res.end();
-    }
+    // Evaluation and direct guidance run only through /analyze's speech triggers.
+    // A typed message begins streaming immediately and never waits for that pipeline.
 
     // Guidance selected through the client is already persisted before this request begins.
     let messages = [];
@@ -247,7 +228,7 @@ router.post('/stream', async (req, res) => {
         [sessionId]
       );
       messages = (rows as any[]).map(row => ({
-        role: row.role,
+        role: row.role === 'user' ? 'user' : 'assistant',
         content: row.content
       }));
     }
@@ -258,15 +239,13 @@ router.post('/stream', async (req, res) => {
     }
 
     // Call OpenAI API with streaming enabled
-    onStage?.({ agent: 'main_response_agent', status: 'started', timestamp: Date.now() });
     const openai = getOpenAI();
-    mainStart = new Date();
     const stream = await openai.chat.completions.create({
       model: modelName,
       reasoning_effort: 'low',
       verbosity: 'low',
       messages: [
-        { role: 'system', content: MAIN_RESPONSE_SYSTEM_PROMPT },
+        ...mainResponseSystemMessages(sessionId),
         ...messages
       ],
       // This cap includes hidden reasoning tokens as well as the visible reply.
@@ -301,12 +280,6 @@ router.post('/stream', async (req, res) => {
 
       // Send completion signal - streaming completed successfully
       res.write(`data: ${JSON.stringify({ content: '', done: true })}\n\n`);
-      onStage?.({
-        agent: 'main_response_agent',
-        status: 'completed',
-        detail: `responded (${fullMessage.length} chars)`,
-        timestamp: Date.now(),
-      });
 
       // Save complete assistant message to database (allow for both practice and actual sessions)
       if (db && fullMessage.trim()) {
@@ -316,21 +289,6 @@ router.post('/stream', async (req, res) => {
         );
       }
 
-      // Paper 2: log Main Response Agent execution + deterministic AI-Response move
-      if (db && pipelineResult.ran && pipelineResult.turnIndex !== undefined && fullMessage.trim()) {
-        try {
-          await logMainResponseTurn(db, sessionId, pipelineResult.turnIndex, {
-            input: { messages },
-            output: fullMessage,
-            modelUsed: modelName,
-            startedAt: mainStart,
-            completedAt: new Date(),
-            status: 'success',
-          });
-        } catch (logError) {
-          console.error('Failed to log main_response_agent execution:', logError);
-        }
-      }
 
       res.end();
 
@@ -357,22 +315,6 @@ router.post('/stream', async (req, res) => {
         }
       }
 
-      // Paper 2: best-effort log of the interrupted Main Response Agent step
-      if (db && pipelineResult.ran && pipelineResult.turnIndex !== undefined) {
-        try {
-          await logMainResponseTurn(db, sessionId, pipelineResult.turnIndex, {
-            input: { messages },
-            output: fullMessage,
-            modelUsed: modelName,
-            startedAt: mainStart,
-            completedAt: new Date(),
-            status: 'error',
-            errorMessage: streamError?.message ?? 'Stream connection error',
-          });
-        } catch (logError) {
-          console.error('Failed to log main_response_agent execution:', logError);
-        }
-      }
 
       // Try to notify frontend about the interruption with partial content
       try {
@@ -416,22 +358,6 @@ router.post('/stream', async (req, res) => {
       }
     }
 
-    // Paper 2: best-effort log of the failed Main Response Agent step
-    if (db && pipelineResult.ran && pipelineResult.turnIndex !== undefined) {
-      try {
-        await logMainResponseTurn(db, sessionId, pipelineResult.turnIndex, {
-          input: { message },
-          output: fullMessage,
-          modelUsed: modelName,
-          startedAt: mainStart,
-          completedAt: new Date(),
-          status: 'error',
-          errorMessage: error?.message ?? 'Chat streaming error',
-        });
-      } catch (logError) {
-        console.error('Failed to log main_response_agent execution:', logError);
-      }
-    }
 
     // Try to send error message to frontend
     try {
@@ -474,7 +400,7 @@ router.post('/', async (req, res) => {
         [sessionId]
       );
       messages = (rows as any[]).map(row => ({
-        role: row.role,
+        role: row.role === 'user' ? 'user' : 'assistant',
         content: row.content
       }));
     }
@@ -492,7 +418,7 @@ router.post('/', async (req, res) => {
       reasoning_effort: 'low',
       verbosity: 'low',
       messages: [
-        { role: 'system', content: MAIN_RESPONSE_SYSTEM_PROMPT },
+        ...mainResponseSystemMessages(sessionId),
         ...messages
       ],
       // This cap includes hidden reasoning tokens as well as the visible reply.
@@ -552,20 +478,6 @@ router.post('/save-message', async (req, res) => {
         [sessionId, role, content, model || null, isGuidance]
       );
 
-      // An Insert is an explicit acceptance of the currently displayed guidance.
-      // For all treatment groups (never control), reset the prior streak and
-      // persist a two-content-move grace period across later evaluator calls.
-      if (isGuidance === true && role === 'user') {
-        await db.execute(
-          `UPDATE manipulation_state
-           SET streak_orientation = NULL,
-               streak_count = 0,
-               streak_suppression_remaining = 2,
-               updated_at = NOW()
-           WHERE session_id = ? AND is_control = FALSE`,
-          [sessionId]
-        );
-      }
     }
 
     res.json({
@@ -593,7 +505,9 @@ router.get('/history', async (req, res) => {
     }
 
     const [rows] = await db.execute(
-      'SELECT id, role, content, model_slug, is_guidance, timestamp FROM messages WHERE session_id = ? ORDER BY timestamp ASC',
+      `SELECT id, role, content, model_slug, is_guidance, guidance_direction,
+              guidance_previous_ideas, guidance_display_at, timestamp
+       FROM messages WHERE session_id = ? ORDER BY timestamp ASC`,
       [sessionId]
     );
 
@@ -603,6 +517,11 @@ router.get('/history', async (req, res) => {
       content: row.content,
       modelSlug: row.model_slug,
       isGuidance: !!row.is_guidance,
+      guidanceDirection: row.guidance_direction ?? undefined,
+      guidancePreviousIdeas: row.guidance_previous_ideas
+        ? (typeof row.guidance_previous_ideas === 'string' ? JSON.parse(row.guidance_previous_ideas) : row.guidance_previous_ideas)
+        : undefined,
+      guidanceDisplayAt: row.guidance_display_at ?? undefined,
       timestamp: row.timestamp,
     }));
 

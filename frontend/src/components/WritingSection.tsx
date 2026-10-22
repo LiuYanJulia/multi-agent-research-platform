@@ -110,13 +110,12 @@ const WritingSection: React.FC<WritingSectionProps> = ({
 
   // Auto-save functionality
   useEffect(() => {
-    if (content.trim()) {
-      const autoSaveTimer = setTimeout(() => {
-        autoSave();
-      }, 3000);
-
-      return () => clearTimeout(autoSaveTimer);
-    }
+    // Save every actual editor state after a three-second debounce, including a
+    // cleared draft so writing snapshots can capture semantic revisions/deletions.
+    const autoSaveTimer = setTimeout(() => {
+      autoSave();
+    }, 3000);
+    return () => clearTimeout(autoSaveTimer);
   }, [content, autoSave]);
 
   const handleSubmit = async () => {

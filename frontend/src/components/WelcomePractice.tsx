@@ -120,7 +120,7 @@ const WelcomePractice: React.FC<WelcomePracticeProps> = ({ onStart, groupId }) =
               marginBottom: '1.5rem'
             }}>
               <p style={{ fontSize: '0.875rem', color: '#065f46' }}>
-                <strong>AI guidance may occasionally appear in the chat.</strong> When it does, select Insert to follow the guidance as you continue the discussion.
+                <strong>AI guidance may occasionally appear in the chat.</strong> A five-second countdown notification will appear first, then the guidance and its AI response will be added automatically to the conversation.
               </p>
             </div>
           )}
@@ -139,7 +139,7 @@ const WelcomePractice: React.FC<WelcomePracticeProps> = ({ onStart, groupId }) =
               <ol style={{ fontSize: '0.875rem', color: '#78350f', margin: 0, paddingLeft: '1.25rem' }}>
                 <li style={{ marginBottom: '0.375rem' }}><strong>Exploration (1 minute 30 seconds):</strong> use the chat to explore ideas. The writing area is locked.</li>
                 <li style={{ marginBottom: '0.375rem' }}><strong>Transition:</strong> when exploration ends, a popup pauses the timer. Select Next to begin the next phase.</li>
-                <li><strong>Writing (1 minute 30 seconds):</strong> write your proposal. You can no longer send prompts or request AI responses, but AI guidance may still appear.</li>
+                <li><strong>Writing (1 minute 30 seconds):</strong> write your proposal. You can no longer send prompts or request AI responses, but AI guidance may still appear after its five-second countdown notification.</li>
               </ol>
             </div>
           )}

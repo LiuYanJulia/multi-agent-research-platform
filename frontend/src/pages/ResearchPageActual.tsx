@@ -27,6 +27,22 @@ const ResearchPageActual: React.FC<ResearchPageActualProps> = ({
     batchSize: 50,
     batchInterval: 5000,
   });
+  // The wall-clock session start is still useful for restoring an older session,
+  // but active time is persisted separately so time spent reading a modal is never
+  // added back after a refresh.
+  const elapsedStorageKey = `research-platform:actual-active-elapsed:${sessionId}`;
+  const writingPhaseStorageKey = `research-platform:actual-writing-phase-start:${sessionId}`;
+  const [initialElapsedSeconds] = useState(() => {
+    const wallClockFallback = sessionStartTime
+      ? Math.max(0, Math.floor((Date.now() - sessionStartTime) / 1000))
+      : 0;
+
+    if (typeof window === 'undefined') return wallClockFallback;
+    const storedValue = window.localStorage.getItem(elapsedStorageKey);
+    const stored = storedValue === null ? NaN : Number(storedValue);
+    return Number.isFinite(stored) && stored >= 0 ? Math.floor(stored) : wallClockFallback;
+  });
+  const elapsedSecondsRef = useRef(initialElapsedSeconds);
   const [submissionComplete, setSubmissionComplete] = useState(false);
   const [showTimeWarning, setShowTimeWarning] = useState(false);
   const [showForcedSubmission, setShowForcedSubmission] = useState(false);
@@ -34,7 +50,7 @@ const ResearchPageActual: React.FC<ResearchPageActualProps> = ({
   const [hasExtendedTime, setHasExtendedTime] = useState(false);
   const [isSubmissionConfirmationOpen, setIsSubmissionConfirmationOpen] = useState(false);
   const [minimumSubmissionTimeReached, setMinimumSubmissionTimeReached] = useState(
-    sessionStartTime ? Date.now() - sessionStartTime >= 10 * 60 * 1000 : false
+    initialElapsedSeconds >= 10 * 60
   );
   const transcriptRef = useRef<WebRTCTranscriptRef>(null);
 
@@ -45,12 +61,6 @@ const ResearchPageActual: React.FC<ResearchPageActualProps> = ({
   const [debugStages, setDebugStages] = useState<AgentStageEvent[]>([]);
   const [transcriptChunks, setTranscriptChunks] = useState<string[]>([]);
   const [speechActivityAt, setSpeechActivityAt] = useState(0);
-  // Resume-on-refresh (2026-09): if the page reloads mid-session, sessionStartTime is restored
-  // from localStorage (see App.tsx) rather than reset, so this starts from the real elapsed time
-  // instead of 0 - otherwise the 20/25-minute timers and Low-TF phase timing would all be wrong
-  // after any refresh.
-  const initialElapsedSeconds = sessionStartTime ? Math.floor((Date.now() - sessionStartTime) / 1000) : 0;
-  const elapsedSecondsRef = useRef(initialElapsedSeconds);
   const warningShownRef = useRef(false);
   const forcedSubmissionShownRef = useRef(false);
   const extensionPromptShownRef = useRef(false);
@@ -60,6 +70,7 @@ const ResearchPageActual: React.FC<ResearchPageActualProps> = ({
   // sessions never get a manipulation_state row with tf_level === 'low', so isLowTF
   // stays false and the writing area behaves exactly as before.
   const [isLowTF, setIsLowTF] = useState(false);
+  const [isHighTF, setIsHighTF] = useState(false);
   const [manipulationPhase, setManipulationPhase] = useState<'collect' | 'synthesize' | 'na' | null>(null);
   const [canAdvancePhase, setCanAdvancePhase] = useState(false);
   const [advancingPhase, setAdvancingPhase] = useState(false);
@@ -76,10 +87,10 @@ const ResearchPageActual: React.FC<ResearchPageActualProps> = ({
   const STANDARD_TIME_LIMIT_SECONDS = 25 * 60;
   const MIN_COLLECT_PHASE_SECONDS = 5 * 60; // 5 minutes - matches backend MIN_COLLECT_PHASE_MS
   const COLLECT_PHASE_REMINDER_SECONDS = 15 * 60; // 15-minute soft reminder if still in "collect"
-  const COLLECT_PHASE_LIMIT_SECONDS = 20 * 60;
-  const WRITING_REMINDER_SECONDS = 21 * 60;
-  const SCHEDULED_END_SECONDS = 26 * 60;
-  const EXTENDED_TIME_LIMIT_SECONDS = 28 * 60;
+  const COLLECT_PHASE_LIMIT_SECONDS = 19 * 60;
+  const WRITING_REMINDER_SECONDS = 20 * 60;
+  const SCHEDULED_END_SECONDS = 25 * 60;
+  const EXTENDED_TIME_LIMIT_SECONDS = 27 * 60;
   const MIN_WRITING_PHASE_SECONDS = 4 * 60;
 
   // Paper 2: fetch this session's manipulation condition/phase once on mount.
@@ -95,18 +106,26 @@ const ResearchPageActual: React.FC<ResearchPageActualProps> = ({
           setIsLowTF(true);
           const phase = data.phase ?? 'collect';
           setManipulationPhase(phase);
-          if (phase === 'collect' && Math.floor((Date.now() - sessionStartTime) / 1000) >= MIN_COLLECT_PHASE_SECONDS) {
+          if (phase === 'collect' && elapsedSecondsRef.current >= MIN_COLLECT_PHASE_SECONDS) {
             setCanAdvancePhase(true);
           }
           if (phase === 'synthesize') {
-            const phaseStart = data.phaseAdvancedAt
-              ? Math.max(0, Math.floor((new Date(data.phaseAdvancedAt).getTime() - sessionStartTime) / 1000))
-              : elapsedSecondsRef.current;
+            const storedPhaseStartValue = typeof window === 'undefined'
+              ? null
+              : window.localStorage.getItem(writingPhaseStorageKey);
+            const storedPhaseStart = storedPhaseStartValue === null ? NaN : Number(storedPhaseStartValue);
+            const phaseStart = Number.isFinite(storedPhaseStart) && storedPhaseStart >= 0
+              ? Math.floor(storedPhaseStart)
+              : data.phaseAdvancedAt
+                ? Math.max(0, Math.floor((new Date(data.phaseAdvancedAt).getTime() - sessionStartTime) / 1000))
+                : elapsedSecondsRef.current;
             setWritingPhaseStartElapsed(phaseStart);
             if (elapsedSecondsRef.current - phaseStart >= MIN_WRITING_PHASE_SECONDS) {
               setWritingMinimumTimeReached(true);
             }
           }
+        } else if (data.enabled && !data.isControl && data.tfLevel === 'high') {
+          setIsHighTF(true);
         }
       } catch (error) {
         console.error('[Actual] Error fetching manipulation state:', error);
@@ -116,7 +135,7 @@ const ResearchPageActual: React.FC<ResearchPageActualProps> = ({
       fetchManipulationState();
     }
     return () => { cancelled = true; };
-  }, [sessionId, sessionStartTime, MIN_COLLECT_PHASE_SECONDS, MIN_WRITING_PHASE_SECONDS]);
+  }, [sessionId, sessionStartTime, MIN_COLLECT_PHASE_SECONDS, MIN_WRITING_PHASE_SECONDS, writingPhaseStorageKey]);
 
   // Auto-start recording when page loads
   useEffect(() => {
@@ -143,6 +162,11 @@ const ResearchPageActual: React.FC<ResearchPageActualProps> = ({
 
   const handleTimerTick = React.useCallback((seconds: number) => {
     elapsedSecondsRef.current = seconds;
+    try {
+      window.localStorage.setItem(elapsedStorageKey, String(seconds));
+    } catch {
+      // A blocked storage API should not prevent the participant's timer from running.
+    }
 
     // Re-render the writing section once at the 10-minute threshold so its submit
     // button becomes available even when the participant is not currently typing.
@@ -151,12 +175,21 @@ const ResearchPageActual: React.FC<ResearchPageActualProps> = ({
     }
 
     if (!isLowTF) {
-      // Preserve the original one-phase timing for groups 1–3.
+      // One-phase sessions all receive a five-minute warning. High-TF treatment
+      // groups can choose a final two-minute wrap-up at the scheduled end.
       if (seconds >= STANDARD_TIME_WARNING_SECONDS && !warningShownRef.current && !forcedSubmissionShownRef.current) {
         warningShownRef.current = true;
         setShowTimeWarning(true);
       }
-      if (seconds >= STANDARD_TIME_LIMIT_SECONDS && !forcedSubmissionShownRef.current) {
+      if (isHighTF && seconds >= SCHEDULED_END_SECONDS && !extensionPromptShownRef.current) {
+        extensionPromptShownRef.current = true;
+        setShowSubmissionExtension(true);
+      }
+      if (isHighTF && hasExtendedTime && seconds >= EXTENDED_TIME_LIMIT_SECONDS && !forcedSubmissionShownRef.current) {
+        forcedSubmissionShownRef.current = true;
+        setShowForcedSubmission(true);
+      }
+      if (!isHighTF && seconds >= STANDARD_TIME_LIMIT_SECONDS && !forcedSubmissionShownRef.current) {
         forcedSubmissionShownRef.current = true;
         setShowForcedSubmission(true);
       }
@@ -195,7 +228,7 @@ const ResearchPageActual: React.FC<ResearchPageActualProps> = ({
         setShowForcedSubmission(true);
       }
     }
-  }, [STANDARD_TIME_WARNING_SECONDS, STANDARD_TIME_LIMIT_SECONDS, MIN_COLLECT_PHASE_SECONDS, COLLECT_PHASE_REMINDER_SECONDS, COLLECT_PHASE_LIMIT_SECONDS, WRITING_REMINDER_SECONDS, SCHEDULED_END_SECONDS, EXTENDED_TIME_LIMIT_SECONDS, MIN_WRITING_PHASE_SECONDS, isLowTF, manipulationPhase, canAdvancePhase, minimumSubmissionTimeReached, writingPhaseStartElapsed, writingMinimumTimeReached, hasExtendedTime]);
+  }, [STANDARD_TIME_WARNING_SECONDS, STANDARD_TIME_LIMIT_SECONDS, MIN_COLLECT_PHASE_SECONDS, COLLECT_PHASE_REMINDER_SECONDS, COLLECT_PHASE_LIMIT_SECONDS, WRITING_REMINDER_SECONDS, SCHEDULED_END_SECONDS, EXTENDED_TIME_LIMIT_SECONDS, MIN_WRITING_PHASE_SECONDS, isLowTF, isHighTF, manipulationPhase, canAdvancePhase, minimumSubmissionTimeReached, writingPhaseStartElapsed, writingMinimumTimeReached, hasExtendedTime, elapsedStorageKey]);
 
   const handleRequestAdvancePhase = () => {
     logger.logEvent({
@@ -237,7 +270,13 @@ const ResearchPageActual: React.FC<ResearchPageActualProps> = ({
         setShowPhaseReminder(false);
         setShowPhaseLimit(false);
         setShowAdvancePhaseConfirm(false);
-        setWritingPhaseStartElapsed(elapsedSecondsRef.current);
+        const phaseStartElapsed = elapsedSecondsRef.current;
+        setWritingPhaseStartElapsed(phaseStartElapsed);
+        try {
+          window.localStorage.setItem(writingPhaseStorageKey, String(phaseStartElapsed));
+        } catch {
+          // The current page state still keeps the phase timing correct if storage is unavailable.
+        }
         setWritingMinimumTimeReached(false);
         logger.logEvent({
           eventType: 'ui',
@@ -282,6 +321,7 @@ const ResearchPageActual: React.FC<ResearchPageActualProps> = ({
     showTimeWarning ||
     showForcedSubmission ||
     isSubmissionConfirmationOpen ||
+    showSubmissionExtension ||
     (isLowTF && (
       showAdvancePhaseConfirm ||
       showPhaseReminder ||
@@ -315,16 +355,16 @@ const ResearchPageActual: React.FC<ResearchPageActualProps> = ({
     <>
       <DebugPanel isTestUser={isTestUser} isPracticeSession={false} transcript={debugTranscript} partialTranscript={debugPartialTranscript} stages={debugStages} />
 
-      {/* Timer - count up, hidden (only for tracking) */}
+      {/* Timer - visible count up for the participant's time awareness. */}
       <Timer
         mode="countup"
         initialSeconds={initialElapsedSeconds}
-        visible={false}
+        visible={true}
         onTick={handleTimerTick}
         paused={isTimerPaused}
       />
 
-      {/* Standard one-phase groups retain their original 20-minute warning. */}
+      {/* One-phase groups receive a reminder at 20 total minutes. */}
       {showTimeWarning && (
         <TimeWarningPopup onContinue={handleTimeWarningContinue} />
       )}
@@ -386,7 +426,7 @@ const ResearchPageActual: React.FC<ResearchPageActualProps> = ({
           <div style={{ backgroundColor: 'white', borderRadius: '0.5rem', padding: '1.5rem', maxWidth: '30rem', width: '100%' }}>
             <h2 id="phase-reminder-title" style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '0.75rem' }}>Time Check</h2>
             <p style={{ color: '#4b5563', fontSize: '0.875rem', lineHeight: 1.5, marginBottom: '1.25rem' }}>
-              You have been in the exploration phase for 15 minutes. You have 5 minutes remaining before you move to the writing phase.
+              You have been in the exploration phase for 15 minutes. You have 4 minutes remaining before you move to the writing phase.
             </p>
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
               <button onClick={handleContinueExploring} style={{ padding: '0.5rem 0.875rem', border: 'none', borderRadius: '0.375rem', backgroundColor: '#f59e0b', color: 'white', cursor: 'pointer' }}>
@@ -397,7 +437,7 @@ const ResearchPageActual: React.FC<ResearchPageActualProps> = ({
         </div>
       )}
 
-      {/* Low-TF: Phase 1 has a hard 20-minute limit. */}
+      {/* Low-TF: Phase 1 has a hard 19-minute limit. */}
       {showPhaseLimit && manipulationPhase === 'collect' && (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -406,7 +446,7 @@ const ResearchPageActual: React.FC<ResearchPageActualProps> = ({
           <div style={{ backgroundColor: 'white', borderRadius: '0.5rem', padding: '1.5rem', maxWidth: '30rem', width: '100%' }}>
             <h2 id="phase-limit-title" style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '0.75rem' }}>Exploration Phase Complete</h2>
             <p style={{ color: '#4b5563', fontSize: '0.875rem', lineHeight: 1.5, marginBottom: '1.25rem' }}>
-              You have reached the 20-minute limit for the exploration phase. Your exploration work has been saved. Please continue to the writing phase now.
+              You have reached the 19-minute limit for the exploration phase. Your exploration work has been saved. Please continue to the writing phase now.
             </p>
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
               <button onClick={() => handleAdvancePhase('phase_limit')} disabled={advancingPhase} style={{ padding: '0.5rem 0.875rem', border: 'none', borderRadius: '0.375rem', backgroundColor: advancingPhase ? '#fcd34d' : '#f59e0b', color: 'white', cursor: advancingPhase ? 'wait' : 'pointer' }}>
@@ -417,7 +457,7 @@ const ResearchPageActual: React.FC<ResearchPageActualProps> = ({
         </div>
       )}
 
-      {/* Low-TF: writing reminder at 21 total active minutes. */}
+      {/* Low-TF: writing reminder at 20 total active minutes. */}
       {showWritingReminder && manipulationPhase === 'synthesize' && (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center',

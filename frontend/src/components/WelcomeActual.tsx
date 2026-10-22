@@ -8,6 +8,7 @@ interface WelcomeActualProps {
 const WelcomeActual: React.FC<WelcomeActualProps> = ({ onStart, groupId }) => {
   const hasSecondAi = ['2', '3', '4', '5'].includes(groupId.trim());
   const hasTwoPhases = ['4', '5', 'lowtf_hightm', 'lowtf_lowtm'].includes(groupId.trim().toLowerCase());
+  const hasOptionalWrapUp = hasSecondAi;
 
   return (
     <div style={{
@@ -59,10 +60,10 @@ const WelcomeActual: React.FC<WelcomeActualProps> = ({ onStart, groupId }) => {
               fontWeight: '600',
               marginBottom: '1rem'
             }} className="text-token-text-primary">
-              Your Task: Design a Platform for Adults to Learn
+              Your Task: Design an Adult Learning Platform for Career Development
             </h2>
             <p style={{ marginBottom: '0.75rem' }}>
-              Your task is to design an adult learning platform with <strong>creativity</strong> and <strong>write down your product design proposal in the writing box on the right-hand side of the platform</strong>.
+              Design a helpful and creative adult learning platform for career development, then <strong>write your product design proposal in the writing box on the right-hand side</strong>.
             </p>
           </div>
 
@@ -102,7 +103,7 @@ const WelcomeActual: React.FC<WelcomeActualProps> = ({ onStart, groupId }) => {
               <strong>Minimum Time:</strong> Please spend at least 10 minutes on this task
             </li>
             <li style={{ marginBottom: '0.5rem' }}>
-              <strong>Maximum Time:</strong> 25 minutes
+              <strong>Maximum Time:</strong> {hasOptionalWrapUp ? '27 minutes, including an optional two-minute wrap-up after 25 minutes' : '25 minutes'}
             </li>
             <li style={{ marginBottom: '0.5rem' }}>
               <strong>Verbalize Your Thoughts:</strong> Continue speaking out loud as you work
@@ -121,7 +122,7 @@ const WelcomeActual: React.FC<WelcomeActualProps> = ({ onStart, groupId }) => {
               marginBottom: '1.5rem'
             }}>
               <p style={{ fontSize: '0.875rem', color: '#065f46' }}>
-                <strong>AI guidance may occasionally appear in the chat.</strong> When it does, select View to review it, then Insert to follow the guidance as you continue the discussion.
+                <strong>AI guidance may occasionally appear in the chat.</strong> A five-second countdown notification will appear first, then the guidance and its AI response will be added automatically to the conversation.
               </p>
             </div>
           )}
@@ -138,8 +139,8 @@ const WelcomeActual: React.FC<WelcomeActualProps> = ({ onStart, groupId }) => {
                 <strong>This task has two phases.</strong>
               </p>
               <ol style={{ fontSize: '0.875rem', color: '#78350f', margin: 0, paddingLeft: '1.25rem' }}>
-                <li style={{ marginBottom: '0.375rem' }}><strong>Exploration:</strong> spend at least 5 minutes, and no more than 20 minutes, using the chat to explore ideas. The writing area is locked during this phase. The Next button becomes available after 5 minutes; move to writing by 20 minutes so you have enough time to complete your written proposal.</li>
-                <li><strong>Writing:</strong> after selecting Next, write your response. You can no longer send prompts or request AI responses, but AI guidance may still appear in the chat.</li>
+                <li style={{ marginBottom: '0.375rem' }}><strong>Exploration:</strong> spend at least 5 minutes, and no more than 19 minutes, using the chat to explore ideas. The writing area is locked during this phase. The Next button becomes available after 5 minutes; move to writing by 19 minutes so you have enough time to complete your written proposal.</li>
+                <li><strong>Writing:</strong> after selecting Next, write your response. You can no longer send prompts or request AI responses, but AI guidance may still appear in the chat after its five-second countdown notification.</li>
               </ol>
             </div>
           )}

@@ -31,6 +31,13 @@ export interface AgentStageEvent {
     eventIdEnd?: number;
   }>;
   evaluationRaw?: unknown;
+  guidanceGenerationInput?: {
+    systemPrompt: string;
+    runtimeInput: string;
+    selectedMoveDescriptions: Array<{ moveId: number; moveType: number; orientation: 'D' | 'C'; description: string }>;
+    recentWritingContext: Array<{ type: 'added' | 'removed' | 'revised'; content: string }>;
+  };
+  guidanceResponseInput?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
   moves?: Array<{
     moveId: number;
     contentMoveNumber: number;
@@ -69,6 +76,8 @@ const PANEL_WIDTH = 340;
 const DebugPanel: React.FC<DebugPanelProps> = ({ isTestUser, isPracticeSession, transcript, partialTranscript, stages }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [expandedEvaluationStage, setExpandedEvaluationStage] = useState<number | null>(null);
+  const [expandedGuidanceGenerationStage, setExpandedGuidanceGenerationStage] = useState<number | null>(null);
+  const [expandedGuidanceResponseStage, setExpandedGuidanceResponseStage] = useState<number | null>(null);
   const latestMoveCounts = [...stages].reverse().find((stage) => stage.moveCounts)?.moveCounts;
   const latestStreak = [...stages].reverse().find((stage) => stage.streak)?.streak;
 
@@ -246,6 +255,68 @@ const DebugPanel: React.FC<DebugPanelProps> = ({ isTestUser, isPracticeSession, 
               )}
               {s.detail && (
                 <div style={{ color: '#9ca3af', marginTop: '0.125rem' }}>{s.detail}</div>
+              )}
+              {s.agent === 'manipulation_controller' && s.status === 'completed' && s.guidanceGenerationInput && (
+                <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid #334155' }}>
+                  <button
+                    type="button"
+                    onClick={() => setExpandedGuidanceGenerationStage((current) => current === i ? null : i)}
+                    aria-expanded={expandedGuidanceGenerationStage === i}
+                    style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', padding: 0,
+                      border: 'none', background: 'transparent', color: '#a7f3d0', fontWeight: 600,
+                      fontSize: 'inherit', textAlign: 'left', cursor: 'pointer',
+                    }}
+                    title="Show the exact input sent to the guidance-generation LLM"
+                  >
+                    <span>Guidance-generation LLM input</span>
+                    <span style={{ color: '#93c5fd', fontSize: '0.68rem' }}>
+                      {expandedGuidanceGenerationStage === i ? 'Hide input ▴' : 'View input ▾'}
+                    </span>
+                  </button>
+                  {expandedGuidanceGenerationStage === i && (
+                    <div style={{ marginTop: '0.5rem' }}>
+                      <div style={{ color: '#93c5fd', fontWeight: 700, marginBottom: '0.25rem' }}>System prompt</div>
+                      <pre style={{ margin: 0, padding: '0.375rem', maxHeight: '10rem', overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', backgroundColor: '#111827', color: '#d1d5db', fontSize: '0.65rem' }}>
+                        {s.guidanceGenerationInput.systemPrompt}
+                      </pre>
+                      <div style={{ color: '#93c5fd', fontWeight: 700, margin: '0.5rem 0 0.25rem' }}>Runtime context</div>
+                      <pre style={{ margin: 0, padding: '0.375rem', maxHeight: '14rem', overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', backgroundColor: '#111827', color: '#d1d5db', fontSize: '0.65rem' }}>
+                        {s.guidanceGenerationInput.runtimeInput}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              )}
+              {s.agent === 'main_response_agent' && s.status === 'completed' && s.guidanceResponseInput && (
+                <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid #334155' }}>
+                  <button
+                    type="button"
+                    onClick={() => setExpandedGuidanceResponseStage((current) => current === i ? null : i)}
+                    aria-expanded={expandedGuidanceResponseStage === i}
+                    style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', padding: 0,
+                      border: 'none', background: 'transparent', color: '#a7f3d0', fontWeight: 600,
+                      fontSize: 'inherit', textAlign: 'left', cursor: 'pointer',
+                    }}
+                    title="Show the exact messages used to generate the AI-response section of this guidance card"
+                  >
+                    <span>AI guidance response LLM input</span>
+                    <span style={{ color: '#93c5fd', fontSize: '0.68rem' }}>
+                      {expandedGuidanceResponseStage === i ? 'Hide input ▴' : 'View input ▾'}
+                    </span>
+                  </button>
+                  {expandedGuidanceResponseStage === i && (
+                    <div style={{ marginTop: '0.5rem', maxHeight: '20rem', overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+                      {s.guidanceResponseInput.map((message, messageIndex) => (
+                        <div key={`${message.role}-${messageIndex}`}>
+                          <div style={{ color: '#93c5fd', fontWeight: 700, marginBottom: '0.2rem' }}>{message.role}</div>
+                          <pre style={{ margin: 0, padding: '0.375rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word', backgroundColor: '#111827', color: '#d1d5db', fontSize: '0.65rem' }}>{message.content}</pre>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
               {s.agent === 'evaluation_agent' && s.status === 'completed' && expandedEvaluationStage === i && s.evaluationInput && (
                 <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid #334155' }}>

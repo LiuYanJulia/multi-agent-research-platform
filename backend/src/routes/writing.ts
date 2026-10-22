@@ -50,6 +50,34 @@ router.post('/save', async (req, res) => {
       );
     }
 
+    // Keep a bounded, append-only window for guidance context. The client already
+    // autosaves at most once per three seconds; unchanged writing never creates a row.
+    const [latestRows] = await db.execute(
+      'SELECT id, content FROM writing_snapshots WHERE session_id = ? ORDER BY captured_at DESC, id DESC LIMIT 1',
+      [sessionId]
+    );
+    const latest = (latestRows as any[])[0];
+    if (!latest || String(latest.content) !== String(content ?? '')) {
+      await db.execute(
+        'INSERT INTO writing_snapshots (session_id, content, captured_at) VALUES (?, ?, ?)',
+        [sessionId, content ?? '', mysqlTimestamp]
+      );
+      // Trim from the oldest side only when the retained range reaches 60 seconds.
+      // Rechecking supports a delayed autosave that crosses more than one interval.
+      while (true) {
+        const [boundsRows] = await db.execute(
+          'SELECT id, captured_at FROM writing_snapshots WHERE session_id = ? ORDER BY captured_at ASC, id ASC',
+          [sessionId]
+        );
+        const snapshots = boundsRows as any[];
+        if (snapshots.length < 2) break;
+        const earliest = snapshots[0];
+        const newest = snapshots[snapshots.length - 1];
+        if (new Date(newest.captured_at).getTime() - new Date(earliest.captured_at).getTime() < 60_000) break;
+        await db.execute('DELETE FROM writing_snapshots WHERE id = ?', [earliest.id]);
+      }
+    }
+
     res.json({
       success: true,
       message: 'Auto-save successful',

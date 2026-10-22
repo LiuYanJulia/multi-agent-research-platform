@@ -98,6 +98,17 @@ async function ensureDecisionAgentEnum() {
   }
 }
 
+async function ensureGuidanceEnums() {
+  const [messageRows] = await db.execute(`SELECT COLUMN_TYPE AS columnType FROM information_schema.COLUMNS WHERE table_schema = DATABASE() AND table_name = 'messages' AND column_name = 'role'`);
+  if (!String((messageRows as any[])[0]?.columnType ?? '').includes("'ai_guidance'")) {
+    await db.execute("ALTER TABLE messages MODIFY COLUMN role ENUM('user', 'assistant', 'ai_guidance') NOT NULL");
+  }
+  const [logRows] = await db.execute(`SELECT COLUMN_TYPE AS columnType FROM information_schema.COLUMNS WHERE table_schema = DATABASE() AND table_name = 'interaction_logs' AND column_name = 'event_type'`);
+  if (!String((logRows as any[])[0]?.columnType ?? '').includes("'ai_guidance'")) {
+    await db.execute("ALTER TABLE interaction_logs MODIFY COLUMN event_type ENUM('mouse', 'keyboard', 'ui', 'api', 'session', 'selection', 'ai_guidance') NOT NULL");
+  }
+}
+
 // Paper 2 (2026-09): some live databases were created long before `participant_id` was the
 // column name in this file's CREATE TABLE statement, and still have the legacy `user_id`
 // column instead (CREATE TABLE IF NOT EXISTS is a no-op on an already-existing table, so
@@ -148,7 +159,7 @@ async function createTables() {
       CREATE TABLE IF NOT EXISTS messages (
         id INT AUTO_INCREMENT PRIMARY KEY,
         session_id VARCHAR(36) NOT NULL,
-        role ENUM('user', 'assistant') NOT NULL,
+        role ENUM('user', 'assistant', 'ai_guidance') NOT NULL,
         content TEXT NOT NULL,
         model_slug VARCHAR(100),
         is_guidance BOOLEAN DEFAULT FALSE COMMENT 'True if this is a Manipulation Controller guidance message (Paper2)',
@@ -163,7 +174,7 @@ async function createTables() {
       CREATE TABLE IF NOT EXISTS interaction_logs (
         id INT AUTO_INCREMENT PRIMARY KEY,
         session_id VARCHAR(36) NOT NULL,
-        event_type ENUM('mouse', 'keyboard', 'ui', 'api', 'session', 'selection') NOT NULL,
+        event_type ENUM('mouse', 'keyboard', 'ui', 'api', 'session', 'selection', 'ai_guidance') NOT NULL,
         action VARCHAR(100) NOT NULL,
         target_element VARCHAR(255),
         target_section ENUM('prompting', 'transcript', 'response', 'writing', 'regenerate-menu'),
@@ -211,6 +222,18 @@ async function createTables() {
         last_saved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
         INDEX idx_session (session_id)
+      )
+    `);
+
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS writing_snapshots (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        session_id VARCHAR(36) NOT NULL,
+        content TEXT NOT NULL,
+        captured_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        received_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+        INDEX idx_writing_snapshots_session_time (session_id, captured_at)
       )
     `);
 
@@ -389,12 +412,16 @@ async function createTables() {
     await db.execute('UPDATE sessions SET started_at = created_at WHERE metadata IS NULL');
     await db.execute('ALTER TABLE sessions MODIFY COLUMN started_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP');
     await ensureColumn('messages', 'is_guidance', "BOOLEAN DEFAULT FALSE");
+    await ensureColumn('messages', 'guidance_direction', "TEXT NULL");
+    await ensureColumn('messages', 'guidance_previous_ideas', "JSON NULL");
+    await ensureColumn('messages', 'guidance_display_at', "TIMESTAMP NULL");
     await ensureColumn('submissions', 'evaluation_audit_json_file_url', "VARCHAR(255) NULL");
     await ensureColumn('submissions', 'evaluation_audit_markdown_file_url', "VARCHAR(255) NULL");
     await ensureColumn('submissions', 'proposal_file_url', "VARCHAR(255) NULL");
     await ensureColumn('manipulation_state', 'last_evaluated_event_id', "INT NOT NULL DEFAULT 0");
     await ensureColumn('manipulation_state', 'streak_suppression_remaining', "INT NOT NULL DEFAULT 0");
     await ensureDecisionAgentEnum();
+    await ensureGuidanceEnums();
 
     console.log('Database tables created successfully');
   } catch (error) {

@@ -11,7 +11,7 @@ import { useEffect, useRef, useCallback } from 'react';
  */
 
 // Type definitions for event logging
-export type EventType = 'mouse' | 'keyboard' | 'selection' | 'ui';
+export type EventType = 'mouse' | 'keyboard' | 'selection' | 'ui' | 'ai_guidance';
 
 export type MouseAction =
   | 'cursor_move'
@@ -538,8 +538,9 @@ export const useInteractionLogger = (options: UseInteractionLoggerOptions) => {
         };
 
         // For Backspace/Delete, try to capture what character will be deleted
-        if ((e.key === 'Backspace' || e.key === 'Delete') &&
-            target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+        const isDeletionKey = e.key === 'Backspace' || e.key === 'Delete';
+        const isTextInput = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
+        if (isDeletionKey && isTextInput) {
           const inputTarget = target as HTMLInputElement | HTMLTextAreaElement;
           const cursorPos = inputTarget.selectionStart || 0;
           const value = inputTarget.value;
@@ -893,7 +894,6 @@ export const useInteractionLogger = (options: UseInteractionLoggerOptions) => {
     return () => {
       document.removeEventListener('input', handleInput, true);
       document.removeEventListener('focus', handleFocus, true);
-      inputValuesRef.current.clear();
     };
   }, [logEvent]);
 
