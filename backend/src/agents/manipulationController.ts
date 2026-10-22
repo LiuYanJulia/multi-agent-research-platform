@@ -203,9 +203,9 @@ type GuidancePolicyKey = `${Orientation}_${TmLevel}`;
  * the participant-facing wording, but it never gets to relax the controller's
  * required context span, idea count, or magnitude of change.
  */
-const PREVIOUS_IDEAS_REQUIREMENTS = `previousIdeas: extract only the distinct substantive themes in the supplied Selected move descriptions and Recent writing context. Each item must be a short, concrete keyword phrase of one to ten words, usually a compact noun phrase. Do not return a move description, sentence, observation, or event summary. Never include action or narrator language such as "user", "ask", "evaluate", "generate", "want", "consider", "view", "select", or "AI Response (Message ID: ...)". Merge repeated mentions of the same theme into one phrase. If a response-engagement event has no named topic, summarize repeated engagement only once as "previous AI response". If it names a topic, extract that topic instead.
+const PREVIOUS_IDEAS_REQUIREMENTS = `previousIdeas: extract only the distinct substantive themes in the supplied Selected move descriptions and Recent writing context. Each item must be a short, concrete keyword phrase of one to ten words, usually a compact noun phrase. Do not return a move description, sentence, observation, or event summary. Never include action or narrator language such as "user", "ask", "evaluate", "generate", "want", "consider", "view", "select", or "AI Response (Message ID: ...)". Omit events that only say the participant wants to check, ask, or consult AI. Omit response-engagement events with no named design topic; never output "previous AI response" or any equivalent phrase. If a response-engagement event names a design topic, extract only that topic.
 
-Examples: "User asks what kind of educational toy for 5-10 years old girls the current market has" becomes "educational toy for girls aged 5-10"; "User evaluates AI response on role-play and career exploration" becomes "role-play and career exploration"; repeated evaluations of a prior response become "previous AI response". For those examples, return ["educational toy for girls aged 5-10", "previous AI response", "role-play and career exploration"].
+Examples: "User asks what kind of educational toy for 5-10 years old girls the current market has" becomes "educational toy for girls aged 5-10"; "User evaluates AI response on role-play and career exploration" becomes "role-play and career exploration"; "User wants to check with AI" and repeated evaluations of an unnamed prior response are omitted. For those examples, return ["educational toy for girls aged 5-10", "role-play and career exploration"].
 
 Use both sources whenever both are available; prioritize concrete ideas in selected move descriptions. ADDED and REVISED writing changes may contribute ideas. Never use a REMOVED item. Do not replace concrete ideas with generic task labels (for example, "adult-learning platform") unless that label was explicitly part of the supplied context. Do not copy full sentences or instructions. There is no fixed number of items: return one phrase for each distinct substantive idea.`;
 
@@ -344,7 +344,7 @@ function deterministicDirectionFallback(spec: GuidanceSpec): string {
 }
 
 function makePromptForResponse(directionGuidance: string, previousIdeas: string[]): string {
-  return `${directionGuidance}\n\nPrevious ideas: ${previousIdeas.join(', ')}\n\nKeep the answers concise and coherent.`;
+  return `${directionGuidance}\n\nPrevious ideas: ${previousIdeas.join(', ')}\n\nUse these keywords only as topical seeds. Give the requested design response directly; never ask the participant to paste, provide, or restate a previous AI response or prior chat content. Keep the answers concise and coherent.`;
 }
 
 function makeGuidanceRuntimeInput(spec: GuidanceSpec): string {
@@ -359,17 +359,19 @@ function makeGuidanceRuntimeInput(spec: GuidanceSpec): string {
 
 function fallbackKeywordPhrase(value: string): string {
   let phrase = conciseGuidance(value).replace(/[.]+$/, '').trim();
+  if (/\b(?:want(?:s|ed|ing)?\s+to\s+)?(?:check|ask|consult|talk)\s+(?:with|to)\s+(?:the\s+)?ai\b/i.test(phrase)) {
+    return '';
+  }
   const isResponseEngagement = /\b(?:evaluat(?:e|es|ed|ing)|view(?:s|ed|ing)?|read(?:s|ing)?|select(?:s|ed|ing)?|hover(?:s|ed|ing)?|scroll(?:s|ed|ing)?|consider(?:s|ed|ing)?)\b/i.test(phrase)
     && /\bai\s+response\b|\bresponse section\b|\bmessage id\b/i.test(phrase);
 
   if (isResponseEngagement) {
     const namedTopic = phrase.match(/\b(?:on|about)\s+(.+)$/i)?.[1]
-      ?.replace(/\b(?:the\s+)?previous\s+response\b/i, 'previous AI response')
       .replace(/[.]+$/, '')
       .trim();
     return namedTopic && !/^previous\s+(?:ai\s+)?response$/i.test(namedTopic)
       ? namedTopic
-      : 'previous AI response';
+      : '';
   }
 
   phrase = phrase
@@ -388,6 +390,7 @@ function isKeywordPhrase(value: string): boolean {
   return Boolean(normalized)
     && !/^(?:the\s+)?user\b/i.test(normalized)
     && !/\b(?:ask(?:ing)?|evaluat(?:e|es|ed|ing)|generat(?:e|es|ed|ing)|want(?:s|ed|ing)?|consider(?:s|ed|ing)?|view(?:s|ed|ing)?|select(?:s|ed|ing)?|hover(?:s|ed|ing)?)\b/i.test(normalized)
+    && !/\bprevious\s+(?:ai\s+)?response\b/i.test(normalized)
     && !/\bai\s+response\s*\(\s*message\s+id/i.test(normalized)
     && !/[.!?]$/.test(normalized)
     && normalized.split(/\s+/).length <= 10;
