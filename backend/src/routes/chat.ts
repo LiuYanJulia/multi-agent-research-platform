@@ -73,11 +73,28 @@ router.post('/analyze', async (req, res) => {
   const stages: AgentStageEvent[] = [];
   try {
     const result = await runIncrementalPipeline(db, sessionId, (stage) => stages.push(stage), typeof trigger === 'string' ? trigger : undefined);
-    const guidance = result.instruction?.intervened ? await createDirectGuidancePayload(db, sessionId, result) : null;
+    let guidance = result.instruction?.intervened ? await createDirectGuidancePayload(db, sessionId, result) : null;
+    if (guidance) {
+      // Reserve the notification slot at delivery time. The evaluator and guidance
+      // generation still run; only the participant-facing notification is throttled.
+      const [reservation] = await db.execute(
+        `UPDATE manipulation_state
+         SET last_guidance_notification_at = CURRENT_TIMESTAMP
+         WHERE session_id = ?
+           AND (last_guidance_notification_at IS NULL
+                OR last_guidance_notification_at <= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 60 SECOND))`,
+        [sessionId]
+      );
+      if (Number((reservation as any).affectedRows ?? 0) === 0) {
+        await db.execute('DELETE FROM messages WHERE id = ? AND session_id = ?', [guidance.messageId, sessionId]);
+        guidance = null;
+      }
+    }
     if (guidance) {
       stages.push({
         agent: 'main_response_agent', status: 'completed',
         detail: 'Generated the AI-response portion of the guidance card.',
+        modelUsed: process.env.OPENAI_MODEL || 'gpt-5.6-terra',
         guidanceResponseInput: guidance.guidanceResponseInput,
         timestamp: Date.now(),
       });
@@ -240,6 +257,11 @@ router.post('/stream', async (req, res) => {
 
     // Call OpenAI API with streaming enabled
     const openai = getOpenAI();
+    res.write(`data: ${JSON.stringify({ agentStage: {
+      agent: 'main_response_agent', status: 'started',
+      detail: `Main response AI running with "${modelName}".`, modelUsed: modelName,
+      timestamp: Date.now(),
+    } })}\n\n`);
     const stream = await openai.chat.completions.create({
       model: modelName,
       reasoning_effort: 'low',
@@ -277,6 +299,14 @@ router.post('/stream', async (req, res) => {
           }
         }
       }
+
+      // Send the model identity before the completion signal so test-mode clients
+      // can show exactly which model produced each normal chat response.
+      res.write(`data: ${JSON.stringify({ agentStage: {
+        agent: 'main_response_agent', status: 'completed',
+        detail: `Main response AI completed with "${modelName}".`, modelUsed: modelName,
+        timestamp: Date.now(),
+      } })}\n\n`);
 
       // Send completion signal - streaming completed successfully
       res.write(`data: ${JSON.stringify({ content: '', done: true })}\n\n`);

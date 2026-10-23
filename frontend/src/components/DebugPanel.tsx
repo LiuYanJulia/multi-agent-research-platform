@@ -13,6 +13,7 @@ export interface AgentStageEvent {
   agent: 'evaluation_agent' | 'decision_agent' | 'manipulation_controller' | 'main_response_agent';
   status: 'started' | 'completed' | 'error';
   detail?: string;
+  modelUsed?: string | null;
   evaluationInput?: Array<{
     eventId: number;
     timestampStart: number;
@@ -255,6 +256,13 @@ const DebugPanel: React.FC<DebugPanelProps> = ({ isTestUser, isPracticeSession, 
               )}
               {s.detail && (
                 <div style={{ color: '#9ca3af', marginTop: '0.125rem' }}>{s.detail}</div>
+              )}
+              {s.modelUsed && (
+                <div style={{ color: '#c4b5fd', marginTop: '0.125rem' }}>
+                  {s.agent === 'main_response_agent'
+                    ? `Main response AI running with "${s.modelUsed}"`
+                    : `${s.agent === 'evaluation_agent' ? 'Evaluator' : 'Guidance-generation'} LLM running with "${s.modelUsed}"`}
+                </div>
               )}
               {s.agent === 'manipulation_controller' && s.status === 'completed' && s.guidanceGenerationInput && (
                 <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid #334155' }}>

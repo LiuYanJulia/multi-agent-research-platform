@@ -30,6 +30,8 @@ export interface AgentStageEvent {
   agent: 'evaluation_agent' | 'decision_agent' | 'manipulation_controller' | 'main_response_agent';
   status: 'started' | 'completed' | 'error';
   detail?: string;
+  /** Model that handled this agent invocation, including an explicit fallback label. */
+  modelUsed?: string | null;
   // Test-mode only diagnostic payload. This is the timeline partition supplied to
   // the evaluator, never its system prompt or any hidden model instructions.
   evaluationInput?: TimelineEvent[];
@@ -354,6 +356,7 @@ async function runTurnPipelineOnce(
       evaluationInput: partition,
       evaluationMoves: evaluation.moves,
       evaluationRaw: evaluation.raw,
+      modelUsed: evaluation.modelUsed,
       moves: contentLedgerMoves,
       timestamp: Date.now(),
     });
@@ -451,6 +454,7 @@ async function runTurnPipelineOnce(
     guidanceGenerationInput: instruction.guidanceSpec
       ? guidanceGenerationDebugInput(instruction.guidanceSpec)
       : undefined,
+    modelUsed: instruction.debug.guidanceModelUsed,
     timestamp: Date.now(),
   });
 

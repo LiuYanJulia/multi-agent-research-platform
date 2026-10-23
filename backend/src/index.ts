@@ -269,6 +269,7 @@ async function createTables() {
         streak_orientation ENUM('D', 'C') NULL,
         streak_count INT DEFAULT 0,
         streak_suppression_remaining INT NOT NULL DEFAULT 0 COMMENT 'Content moves still excluded from Controller streak after guidance Insert',
+        last_guidance_notification_at TIMESTAMP NULL,
         turn_count INT DEFAULT 0,
         last_evaluated_event_id INT NOT NULL DEFAULT 0,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -420,6 +421,7 @@ async function createTables() {
     await ensureColumn('submissions', 'proposal_file_url', "VARCHAR(255) NULL");
     await ensureColumn('manipulation_state', 'last_evaluated_event_id', "INT NOT NULL DEFAULT 0");
     await ensureColumn('manipulation_state', 'streak_suppression_remaining', "INT NOT NULL DEFAULT 0");
+    await ensureColumn('manipulation_state', 'last_guidance_notification_at', "TIMESTAMP NULL");
     await ensureDecisionAgentEnum();
     await ensureGuidanceEnums();
 
