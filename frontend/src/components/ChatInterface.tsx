@@ -337,7 +337,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
         guidanceDisplayAt: new Date(displayAt),
       };
       setMessages((existing) => existing.some((message) => message.id === card.id) ? existing : [...existing, card]);
-      logger.logEvent({ eventType: 'ai_guidance', action: 'ai_guidance_displayed', target: { element: 'ai-guidance-card', section: 'response', text: `${pendingGuidance.directionGuidance}\n\nPrevious ideas: ${pendingGuidance.previousIdeas.join(', ')}\n\n${pendingGuidance.response}` }, metadata: { messageId: pendingGuidance.messageId, displayDelayMs: 5000, directionGuidance: pendingGuidance.directionGuidance, previousIdeas: pendingGuidance.previousIdeas, responseLength: pendingGuidance.response.length } });
+      logger.logEvent({ eventType: 'ai_guidance', action: 'ai_guidance_displayed', target: { element: 'ai-guidance-card', section: 'response', text: `${pendingGuidance.directionGuidance}\n\nYour earlier ideas: ${pendingGuidance.previousIdeas.join(', ')}\n\n${pendingGuidance.response}` }, metadata: { messageId: pendingGuidance.messageId, displayDelayMs: 5000, directionGuidance: pendingGuidance.directionGuidance, previousIdeas: pendingGuidance.previousIdeas, responseLength: pendingGuidance.response.length } });
       void logger.sendBatch();
       setPendingGuidance(null);
       setGuidanceCountdown(null);
@@ -951,7 +951,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
                       {message.guidanceDirection}
                     </div>
                     <div style={{ marginTop: '0.9rem', fontSize: '0.78rem', color: '#38856b' }}>
-                      [Previous ideas: {(message.guidancePreviousIdeas ?? []).join(', ')}]
+                      [Your earlier ideas: {(message.guidancePreviousIdeas ?? []).join(', ')}]
                     </div>
                     <div className="markdown prose" style={{ color: '#064e3b', fontSize: '0.9375rem', lineHeight: '1.5', marginTop: '0.9rem', overflowX: 'auto' }}>
                       <MemoizedMarkdown content={message.content} />

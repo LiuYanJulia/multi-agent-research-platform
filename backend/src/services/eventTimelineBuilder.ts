@@ -544,7 +544,7 @@ export function buildTimelineEventsFromRows(input: TimelineRowsInput): TimelineE
       ? (typeof row.guidance_previous_ideas === 'string' ? JSON.parse(row.guidance_previous_ideas) : row.guidance_previous_ideas)
       : [];
     const timelineContent = row.role === 'ai_guidance'
-      ? [row.guidance_direction, Array.isArray(previousIdeas) && previousIdeas.length ? `Previous ideas: ${previousIdeas.join(', ')}` : '', row.content].filter(Boolean).join('\n\n')
+      ? [row.guidance_direction, Array.isArray(previousIdeas) && previousIdeas.length ? `Your earlier ideas: ${previousIdeas.join(', ')}` : '', row.content].filter(Boolean).join('\n\n')
       : text(row.content);
     // This is a presentation timestamp applied after source-row selection.
     // It must not affect source cursor movement or which rows are evaluated.

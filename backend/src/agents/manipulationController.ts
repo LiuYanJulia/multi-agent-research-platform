@@ -46,11 +46,11 @@ export interface WritingChange {
 
 /**
  * The machine-readable contract behind one visible guidance message. It is logged
- * with the evaluation audit. `guidanceText` is deliberately more natural than
- * this contract; the contract is the experiment's non-negotiable policy.
+ * with the evaluation audit. The participant-facing direction is deterministic;
+ * the LLM only extracts concise context keywords for the card.
  */
 export interface GuidanceSpec {
-  policyVersion: 'tm-context-v1';
+  policyVersion: 'tm-context-v2';
   targetOrientation: Orientation;
   triggerOrientation: Orientation;
   magnitude: TmLevel;
@@ -69,7 +69,7 @@ export interface StructuredGuidance {
   promptForResponse: string;
 }
 
-/** Exact visible input data for the guidance-generation call, exposed to test mode only. */
+/** Exact keyword-extraction input data, exposed to test mode only. */
 export interface GuidanceGenerationDebugInput {
   systemPrompt: string;
   runtimeInput: string;
@@ -209,6 +209,14 @@ Examples: "User asks what kind of educational toy for 5-10 years old girls the c
 
 Use both sources whenever both are available; prioritize concrete ideas in selected move descriptions. ADDED and REVISED writing changes may contribute ideas. Never use a REMOVED item. Do not replace concrete ideas with generic task labels (for example, "adult-learning platform") unless that label was explicitly part of the supplied context. Do not copy full sentences or instructions. There is no fixed number of items: return one phrase for each distinct substantive idea.`;
 
+const KEYWORD_EXTRACTION_SYSTEM_PROMPT = `You extract the "Your earlier ideas" keywords for an AI-guidance card.
+
+Return JSON only: {"previousIdeas":["..."]}.
+
+Do not write a direction, recommendation, response, explanation, or any other field.
+
+${PREVIOUS_IDEAS_REQUIREMENTS}`;
+
 const GUIDANCE_SYSTEM_PROMPTS: Record<GuidancePolicyKey, string> = {
   D_high: `You generate the structured AI-guidance card for the HIGH-MAGNITUDE DIVERGENT condition.
 
@@ -330,21 +338,26 @@ function guidanceMeetsContract(intro: string, spec: GuidanceSpec): boolean {
   return /only/.test(text) && /merg/.test(text) && /(core|intact|preserv)/.test(text) && /(develop|deepen|concrete|scenario|feature|interaction|decision)/.test(text);
 }
 
-function deterministicDirectionFallback(spec: GuidanceSpec): string {
+export function fixedDirectionGuidance(spec: Pick<GuidanceSpec, 'targetOrientation' | 'magnitude' | 'selectedContextMoves'>): string {
+  const contextIdeaCount = spec.selectedContextMoves.length;
+  const ideaLabel = contextIdeaCount === 1 ? 'idea' : 'ideas';
+  const prefix = `Building on the ${contextIdeaCount} ${ideaLabel} you just shared, please consider`;
+
   if (spec.targetOrientation === 'D' && spec.magnitude === 'high') {
-    return 'Please consider the following ideas as direct extensions of your previous ideas. Generate at least six numbered and clearly distinct design directions that change core assumptions such as the audience, setting, interaction, feedback, or delivery.';
+    return `${prefix} exploring 6 clearly different directions that rethink key aspects of your design.`;
   }
   if (spec.targetOrientation === 'D') {
-    return 'Please consider the following two direct extensions of your previous ideas. Generate exactly two numbered nearby variants, keeping the core direction intact and changing one small element in each.';
+    return `${prefix} exploring 2 variations that keep the core direction while changing one small element.`;
   }
   if (spec.magnitude === 'high') {
-    return 'Please consider the following ideas together as one coherent direction. Synthesize every compatible previous idea, explaining how their strengths and trade-offs work together.';
+    return `${prefix} integrating the distinct roles represented across these ideas into one coherent design, including how its key connections and trade-offs work.`;
   }
-  return 'Please consider the following compatible ideas as a focused combination. Merge only the useful compatible parts while keeping the core direction intact, then develop the focused direction through one concrete scenario, feature, interaction, or design decision.';
+  return `${prefix} making one small connection between two of these ideas to refine your current direction.`;
 }
 
-function makePromptForResponse(directionGuidance: string, previousIdeas: string[]): string {
-  return `${directionGuidance}\n\nPrevious ideas: ${previousIdeas.join(', ')}\n\nUse these keywords only as topical seeds. Give the requested design response directly; never ask the participant to paste, provide, or restate a previous AI response or prior chat content. Keep the answers concise and coherent.`;
+function makePromptForResponse(spec: Pick<GuidanceSpec, 'targetOrientation' | 'magnitude'>, directionGuidance: string, previousIdeas: string[]): string {
+  const wordLimit = spec.targetOrientation === 'D' && spec.magnitude === 'high' ? 160 : 110;
+  return `${directionGuidance}\n\nYour earlier ideas: ${previousIdeas.join(', ')}\n\nUse these keywords only as topical seeds. Keep the output concise and coherent. Stay within ${wordLimit} English words. Start directly with the requested design content. Do not add a preamble, repeat the guidance, or end with a follow-up question. Never ask the participant to paste, provide, or restate a previous AI response or prior chat content.`;
 }
 
 function makeGuidanceRuntimeInput(spec: GuidanceSpec): string {
@@ -408,7 +421,7 @@ function uniqueKeywordPhrases(values: string[]): string[] {
 
 export function guidanceGenerationDebugInput(spec: GuidanceSpec): GuidanceGenerationDebugInput {
   return {
-    systemPrompt: GUIDANCE_SYSTEM_PROMPTS[policyKey(spec.targetOrientation, spec.magnitude)],
+    systemPrompt: KEYWORD_EXTRACTION_SYSTEM_PROMPT,
     runtimeInput: makeGuidanceRuntimeInput(spec),
     selectedMoveDescriptions: spec.selectedContextMoves,
     recentWritingContext: spec.recentWritingContext,
@@ -426,19 +439,19 @@ function fallbackGuidance(spec: GuidanceSpec): StructuredGuidance {
   const previousIdeas = extractedIdeas.length > 0
     ? extractedIdeas
     : ['recent participant design ideas'];
-  const directionGuidance = deterministicDirectionFallback(spec);
-  return { directionGuidance, previousIdeas, promptForResponse: makePromptForResponse(directionGuidance, previousIdeas) };
+  const directionGuidance = fixedDirectionGuidance(spec);
+  return { directionGuidance, previousIdeas, promptForResponse: makePromptForResponse(spec, directionGuidance, previousIdeas) };
 }
 
 function parseGuidance(raw: string, spec: GuidanceSpec): StructuredGuidance | null {
   try {
     const parsed = JSON.parse(raw.replace(/^```json\s*|\s*```$/g, '').trim());
-    const directionGuidance = conciseGuidance(String(parsed?.directionGuidance ?? ''));
     const previousIdeas = Array.isArray(parsed?.previousIdeas)
       ? uniqueKeywordPhrases(parsed.previousIdeas.map((idea: unknown) => fallbackKeywordPhrase(String(idea))).filter(isKeywordPhrase))
       : [];
-    if (!guidanceMeetsContract(directionGuidance, spec) || previousIdeas.length === 0 || !previousIdeas.every(isKeywordPhrase)) return null;
-    return { directionGuidance, previousIdeas, promptForResponse: makePromptForResponse(directionGuidance, previousIdeas) };
+    if (previousIdeas.length === 0 || !previousIdeas.every(isKeywordPhrase)) return null;
+    const directionGuidance = fixedDirectionGuidance(spec);
+    return { directionGuidance, previousIdeas, promptForResponse: makePromptForResponse(spec, directionGuidance, previousIdeas) };
   } catch {
     return null;
   }
@@ -464,7 +477,7 @@ async function generateGuidance(
       model,
       reasoning_effort: 'low',
       messages: [
-        { role: 'system', content: GUIDANCE_SYSTEM_PROMPTS[policyKey(spec.targetOrientation, spec.magnitude)] },
+        { role: 'system', content: KEYWORD_EXTRACTION_SYSTEM_PROMPT },
         { role: 'user', content: userPrompt },
       ],
       // Includes low-effort reasoning plus the small JSON object.
@@ -810,7 +823,7 @@ async function buildInstruction(
   const magnitude = tmLevel ?? 'low';
   const guidanceSpec: GuidanceSpec | null = intervened && targetOrientation
     ? {
-      policyVersion: 'tm-context-v1' as const,
+      policyVersion: 'tm-context-v2' as const,
       targetOrientation,
       triggerOrientation: targetOrientation === 'D' ? 'C' as const : 'D' as const,
       magnitude,

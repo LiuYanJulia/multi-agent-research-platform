@@ -109,6 +109,9 @@ const WelcomeActual: React.FC<WelcomeActualProps> = ({ onStart, groupId }) => {
               <strong>Verbalize Your Thoughts:</strong> Continue speaking out loud as you work
             </li>
             <li style={{ marginBottom: '0.5rem' }}>
+              <strong>AI Assistant:</strong> You can discuss your ideas with the AI chatbot. It will respond to the questions you ask.
+            </li>
+            <li style={{ marginBottom: '0.5rem' }}>
               <strong>Use All Tools:</strong> Feel free to use the AI assistant and writing area, but please remain on this website throughout the entire process until you submit your final work
             </li>
           </ul>
@@ -122,7 +125,7 @@ const WelcomeActual: React.FC<WelcomeActualProps> = ({ onStart, groupId }) => {
               marginBottom: '1.5rem'
             }}>
               <p style={{ fontSize: '0.875rem', color: '#065f46' }}>
-                <strong>AI guidance may occasionally appear in the chat.</strong> A five-second countdown notification will appear first, then the guidance and its AI response will be added automatically to the conversation.
+                <strong>AI guidance may occasionally appear automatically in the chat.</strong> It generates guidance based on creativity research theory and may invite you to explore a different direction or combine compatible ideas. A five-second countdown will appear before the guidance and its AI response are added to the conversation.
               </p>
             </div>
           )}

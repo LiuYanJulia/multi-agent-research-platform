@@ -101,7 +101,7 @@ const WelcomePractice: React.FC<WelcomePracticeProps> = ({ onStart, groupId }) =
               <strong>Voice Recording:</strong> Speak your thoughts out loud as you work through the design
             </li>
             <li style={{ marginBottom: '0.5rem' }}>
-              <strong>AI Assistant:</strong> You can ask questions or discuss your ideas with the AI chatbot
+              <strong>AI Assistant:</strong> You can discuss your ideas with the AI chatbot. It will respond to the questions you ask.
             </li>
             <li style={{ marginBottom: '0.5rem' }}>
               <strong>Writing Area:</strong> Jot down notes or key ideas in the writing section
@@ -120,7 +120,7 @@ const WelcomePractice: React.FC<WelcomePracticeProps> = ({ onStart, groupId }) =
               marginBottom: '1.5rem'
             }}>
               <p style={{ fontSize: '0.875rem', color: '#065f46' }}>
-                <strong>AI guidance may occasionally appear in the chat.</strong> A five-second countdown notification will appear first, then the guidance and its AI response will be added automatically to the conversation.
+                <strong>AI guidance may occasionally appear automatically in the chat.</strong> It generates guidance based on creativity research theory and may invite you to explore a different direction or combine compatible ideas. A five-second countdown will appear before the guidance and its AI response are added to the conversation.
               </p>
             </div>
           )}

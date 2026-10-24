@@ -144,12 +144,12 @@ function responseEvidenceSummary(partition: TimelineEvent[]): string {
   const qualifying = qualifyingResponseEvidence(partition);
   if (qualifying) {
     const details = qualifying.map((item) => `${item.category} (Event #${item.eventId})`).join(', ');
-    return `QUALIFIES: ${details}. At least ${REQUIRED_RESPONSE_EVIDENCE_EVENTS} hover/text-select events occurred within ${RESPONSE_EVIDENCE_WINDOW_MS / 1000} seconds, each tied to the response section or a message ID.`;
+    return `QUALIFIES FOR BEHAVIORAL EVALUATE ONLY: ${details}. At least ${REQUIRED_RESPONSE_EVIDENCE_EVENTS} hover/text-select events occurred within ${RESPONSE_EVIDENCE_WINDOW_MS / 1000} seconds, each tied to the response section or a message ID.`;
   }
   const evidence = responseEvidence(partition);
   return evidence.length
-    ? `DOES NOT QUALIFY: ${evidence.map((item) => `${item.category} (Event #${item.eventId})`).join(', ')}. Behavioral evidence alone cannot support Evaluate.`
-    : 'NO QUALIFYING RESPONSE-ENGAGEMENT EVIDENCE.';
+    ? `DOES NOT QUALIFY FOR BEHAVIORAL EVALUATE: ${evidence.map((item) => `${item.category} (Event #${item.eventId})`).join(', ')}. These events cannot support Evaluate, but they do not restrict classification of independent participant speech as Generate.`
+    : 'NO RESPONSE-ENGAGEMENT EVENTS. This only rules out behavioral Evaluate; independently proposed participant speech can still be Generate.';
 }
 
 function hasExplicitEvaluationLanguage(partition: TimelineEvent[]): boolean {
@@ -277,6 +277,16 @@ function countsMatch(moves: EvaluatedMove[], partition: TimelineEvent[]): boolea
   return moves.filter((move) => move.moveType === 2).length === expectedAsk && moves.filter((move) => move.moveType === 5).length === expectedResponses;
 }
 
+function hasRichSpeechOnlyContribution(partition: TimelineEvent[]): boolean {
+  // A participant's sustained think-aloud is the primary source of Generate
+  // moves between chat turns. Do not accept an empty model array for it simply
+  // because this partition has no chat-message or AI-response skeleton rows.
+  if (partition.some((event) => event.userMessage.trim() || event.aiResponse.trim())) return false;
+  const words = partition
+    .flatMap((event) => event.speech.match(/[\p{L}\p{N}]+/gu) ?? []);
+  return words.length >= 12;
+}
+
 /** The exact non-system prompt supplied for one Evaluation Agent model call. */
 export function buildEvaluationUserPrompt(partition: TimelineEvent[], correction = ''): string {
   return `Analyze this design timeline partition.\n\nResponse-engagement evidence check:\n${responseEvidenceSummary(partition)}\n\nTimeline data:\n${JSON.stringify(partition)}${correction}`;
@@ -375,6 +385,10 @@ export async function evaluateTimelinePartition(partition: TimelineEvent[], user
       const moves = toMoves(extractJsonArray(String(raw)), partition);
       if (!moves) { lastError = 'The response was not a valid JSON array of complete moves.'; continue; }
       if (!countsMatch(moves, partition)) { lastError = `Expected ${expectedAsk} Ask and ${expectedResponses} AI_Response moves.`; if (!bestMoves || moves.length > bestMoves.length) bestMoves = moves; continue; }
+      if (moves.length === 0 && hasRichSpeechOnlyContribution(partition)) {
+        lastError = 'This speech-only partition contains a sustained participant think-aloud. Identify the concrete content move or moves; do not return an empty array.';
+        continue;
+      }
       return { moves, raw, usedFallback: false, durationMs: Date.now() - start, retryCount: attempt - 1, modelUsed: model };
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
