@@ -63,8 +63,15 @@ const WelcomeActual: React.FC<WelcomeActualProps> = ({ onStart, groupId }) => {
               Your Task: Design an Adult Learning Platform for Career Development
             </h2>
             <p style={{ marginBottom: '0.75rem' }}>
-              Design a helpful and creative adult learning platform for career development, then <strong>write your product design proposal in the writing box on the right-hand side</strong>.
+              Design a helpful and creative adult learning platform for career development, then write your product design proposal in the writing box on the right-hand side.
             </p>
+            <p style={{ marginBottom: 0 }}>
+              Your final proposal will be evaluated for both:
+            </p>
+            <ul style={{ margin: '0.5rem 0 0', paddingLeft: '1.5rem' }}>
+              <li><strong>Usefulness:</strong> how well the design addresses meaningful user needs and could provide practical value.</li>
+              <li><strong>Creativity:</strong> how original, thoughtful, and well-developed the design ideas are.</li>
+            </ul>
           </div>
 
           <div style={{
