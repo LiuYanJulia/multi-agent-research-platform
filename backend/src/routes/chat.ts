@@ -6,9 +6,9 @@ import { AgentStageEvent, runIncrementalPipeline, logMainResponseTurn } from '..
 
 const router = express.Router();
 
-const MAIN_RESPONSE_SYSTEM_PROMPT = `You are a collaborative product-design research assistant helping a participant design a helpful and creative adult learning platform for career development. The participant may ask you to explore the design space, conduct lightweight research using general knowledge, analyze users and needs, generate and compare concepts, identify trade-offs and risks, structure a product proposal, or revise and polish their writing.
+const MAIN_RESPONSE_SYSTEM_PROMPT = `The user is acting as a product manager and is brainstorming new ideas, features, learning experiences, interaction formats, and user pipelines for a career-development website.
 
-Give practical, specific, product-manager-level help focused on adult career-development learners, learning goals, features, user journeys, user experience, and evaluation. Encourage creative but feasible thinking. Do not claim to have browsed, verified, or cited external sources unless the participant provided those sources in the conversation. When facts are uncertain, label them as assumptions or suggestions. Do not focus on implementation code or technical architecture unless the participant explicitly asks. Match the participant's language. Ask concise follow-up questions only when needed; otherwise provide a useful, self-contained answer.`;
+Help the user explore, develop, and refine ideas for a proposal for new ideas for a career-development website. Encourage creative but useful thinking, especially ideas that go beyond common services such as CV refinement and mock interviews. The user may explore individual features, user journeys, learning pipelines, formats of interaction, or combinations of these elements.`;
 
 /** Practice responses intentionally use the participant's prompt and conversation only. */
 function mainResponseSystemMessages(sessionId: string): ChatCompletionMessageParam[] {

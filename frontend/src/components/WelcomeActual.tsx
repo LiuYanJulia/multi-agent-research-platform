@@ -60,18 +60,24 @@ const WelcomeActual: React.FC<WelcomeActualProps> = ({ onStart, groupId }) => {
               fontWeight: '600',
               marginBottom: '1rem'
             }} className="text-token-text-primary">
-              Your Task: Design an Adult Learning Platform for Career Development
+              Your Task: Brainstorm New Ideas for a Career-Development Website
             </h2>
             <p style={{ marginBottom: '0.75rem' }}>
-              Design a helpful and creative adult learning platform for career development, then write your product design proposal in the writing box on the right-hand side.
+              Please brainstorm new ideas for a career-development website and write a proposal presenting your ideas.
             </p>
-            <p style={{ marginBottom: 0 }}>
-              Your final proposal will be evaluated for both:
+            <p style={{ marginBottom: '0.75rem' }}>
+              Many existing career-development websites offer familiar services, such as CV refinement and mock interviews. Your goal is to propose features, formats, or pipelines that could make a career-development website meaningfully different from what is already available.
             </p>
-            <ul style={{ margin: '0.5rem 0 0', paddingLeft: '1.5rem' }}>
-              <li><strong>Usefulness:</strong> how well the design addresses meaningful user needs and could provide practical value.</li>
-              <li><strong>Creativity:</strong> how original, thoughtful, and well-developed the design ideas are.</li>
+            <p style={{ marginBottom: '0.75rem' }}>
+              Your proposal should introduce your ideas and explain how they would work. It will be evaluated on two criteria:
+            </p>
+            <ul style={{ margin: '0 0 0.75rem', paddingLeft: '1.5rem' }}>
+              <li><strong>Creativity:</strong> How original, distinctive, and imaginative are the ideas?</li>
+              <li><strong>Usefulness:</strong> How well could the ideas help users with their career development?</li>
             </ul>
+            <p style={{ marginBottom: 0 }}>
+              You may focus on new website features, end-to-end user journeys, interaction formats, or service pipelines. The final output should be a <strong>proposal for new ideas for a career-development website</strong>, clearly presenting the ideas and their potential value.
+            </p>
           </div>
 
           <div style={{
@@ -90,7 +96,7 @@ const WelcomeActual: React.FC<WelcomeActualProps> = ({ onStart, groupId }) => {
               ⚠️ Important Reminder:
             </p>
             <p style={{ color: '#92400e' }}>
-              When designing this platform, <strong>avoid</strong> thinking about technical details. You should treat yourself as the <strong>product manager</strong>, <strong>NOT a programmer or software engineer</strong>. Focus on user needs, features, and experience rather than implementation details.
+              Do not focus on technical details. Rather than a programmer or software engineer, please treat yourself as a <strong>product manager</strong>, to brainstorm creative and useful new ideas or features for the website, focusing on user needs, features, and experiences rather than implementation details.
             </p>
           </div>
 
