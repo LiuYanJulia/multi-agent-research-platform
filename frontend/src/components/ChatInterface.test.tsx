@@ -81,7 +81,7 @@ describe('ChatInterface streaming', () => {
     await waitFor(() => expect(scrollTo).toHaveBeenCalledTimes(1));
   });
 
-  it('shows a compact summary and response without exposing guidance context', async () => {
+  it('reports delivered guidance to the page without rendering it in the chat stream', async () => {
     historyMessages = [{
       messageId: 'guidance-1',
       role: 'ai_guidance',
@@ -92,10 +92,18 @@ describe('ChatInterface streaming', () => {
       guidanceDisplaySummary: '[Exploration] Based on your 2 earlier ideas, AI provides 2 ideas for you to consider.',
     }];
 
-    render(<ChatInterface sessionId="guidance-session" sessionStartTime={0} logger={logger} />);
+    const onGuidanceChange = jest.fn();
+    render(<ChatInterface sessionId="guidance-session" sessionStartTime={0} logger={logger} onGuidanceChange={onGuidanceChange} />);
 
-    expect(await screen.findByText('[Exploration] Based on your 2 earlier ideas, AI provides 2 ideas for you to consider.')).toBeInTheDocument();
-    expect(screen.getByText('Start with one concise direction, then develop the key details.')).toBeInTheDocument();
+    await waitFor(() => expect(onGuidanceChange).toHaveBeenLastCalledWith([
+      expect.objectContaining({
+        id: 'guidance-1',
+        displaySummary: '[Exploration] Based on your 2 earlier ideas, AI provides 2 ideas for you to consider.',
+        content: 'Start with one concise direction, then develop the key details.',
+      }),
+    ]));
+    expect(screen.queryByText('[Exploration] Based on your 2 earlier ideas, AI provides 2 ideas for you to consider.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Start with one concise direction, then develop the key details.')).not.toBeInTheDocument();
     expect(screen.queryByText('Explore two nearby design variations.')).not.toBeInTheDocument();
     expect(screen.queryByText(/Your earlier ideas: peer mentoring, skill tracker/)).not.toBeInTheDocument();
   });

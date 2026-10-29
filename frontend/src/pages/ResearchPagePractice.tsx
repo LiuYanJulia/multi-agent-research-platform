@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import ChatInterface from '../components/ChatInterface';
 import WebRTCTranscript, { WebRTCTranscriptRef } from '../components/WebRTCTranscript';
+import GuidancePanel, { DisplayedGuidance } from '../components/GuidancePanel';
 import WritingSection from '../components/WritingSection';
 import Timer from '../components/Timer';
 import DebugPanel, { AgentStageEvent } from '../components/DebugPanel';
@@ -50,6 +51,24 @@ const ResearchPagePractice: React.FC<ResearchPagePracticeProps> = ({
   const [debugStages, setDebugStages] = useState<AgentStageEvent[]>([]);
   const [transcriptChunks, setTranscriptChunks] = useState<string[]>([]);
   const [speechActivityAt, setSpeechActivityAt] = useState(0);
+  const [displayedGuidance, setDisplayedGuidance] = useState<DisplayedGuidance[]>([]);
+  const [newlyDeliveredGuidanceId, setNewlyDeliveredGuidanceId] = useState<string | null>(null);
+  const guidanceFlashTimerRef = useRef<number | null>(null);
+
+  const handleGuidanceChange = React.useCallback((guidance: DisplayedGuidance[], newlyDeliveredId?: string) => {
+    setDisplayedGuidance(guidance.slice(-3));
+    if (!newlyDeliveredId) return;
+    setNewlyDeliveredGuidanceId(newlyDeliveredId);
+    if (guidanceFlashTimerRef.current !== null) window.clearTimeout(guidanceFlashTimerRef.current);
+    guidanceFlashTimerRef.current = window.setTimeout(() => {
+      setNewlyDeliveredGuidanceId(null);
+      guidanceFlashTimerRef.current = null;
+    }, 2_600);
+  }, []);
+
+  React.useEffect(() => () => {
+    if (guidanceFlashTimerRef.current !== null) window.clearTimeout(guidanceFlashTimerRef.current);
+  }, []);
 
   // Resume-on-refresh (2026-09): if the page reloads mid-practice, sessionStartTime is restored
   // from localStorage (see App.tsx) rather than reset, so the countdown continues from the real
@@ -223,30 +242,36 @@ const ResearchPagePractice: React.FC<ResearchPagePracticeProps> = ({
 
       <div className="main-grid bg-token-bg-primary text-token-text-primary">
         {/* LLM Chat Interface - Left Half */}
-        <div className="section-chat border border-gray-200 rounded-lg p-4 bg-token-bg-primary">
-          <ChatInterface
-            sessionId={sessionId}
-            sessionStartTime={sessionStartTime}
-            logger={logger}
-            onAgentStage={(stage) => setDebugStages(prev => [...prev, stage])}
-            transcriptChunks={transcriptChunks}
-            speechActivityAt={speechActivityAt}
-            promptingEnabled={!isTwoPhasePractice || practicePhase === 'exploration'}
-          />
-        </div>
-
-        {/* Right Half - Transcript and Writing */}
-        <div className="section-right">
-          {/* Voice Transcript Section - Top Right */}
-          <div className="section-transcript border border-gray-200 rounded-lg p-4 bg-token-bg-primary">
+        <div className="section-chat border border-gray-200 rounded-lg p-4 bg-token-bg-primary" style={{ display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '0.75rem 1rem 0', flexShrink: 0 }}>
             <WebRTCTranscript
               ref={transcriptRef}
               isPracticeMode={true}
+              compactStatus
               sessionId={sessionId}
               onTranscriptUpdate={(chunks) => { setDebugTranscript(chunks); setTranscriptChunks(chunks); }}
               onTranscriptPartialUpdate={setDebugPartialTranscript}
               onSpeechActivity={setSpeechActivityAt}
             />
+          </div>
+          <div style={{ flex: '1 1 0', minHeight: 0 }}>
+            <ChatInterface
+              sessionId={sessionId}
+              sessionStartTime={sessionStartTime}
+              logger={logger}
+              onAgentStage={(stage) => setDebugStages(prev => [...prev, stage])}
+              transcriptChunks={transcriptChunks}
+              speechActivityAt={speechActivityAt}
+              promptingEnabled={!isTwoPhasePractice || practicePhase === 'exploration'}
+              onGuidanceChange={handleGuidanceChange}
+            />
+          </div>
+        </div>
+
+        {/* Right Half - Proactive guidance above final writing */}
+        <div className="section-right section-right-with-guidance">
+          <div className="section-guidance">
+            <GuidancePanel guidance={displayedGuidance} newlyDeliveredId={newlyDeliveredGuidanceId} />
           </div>
 
           {/* Final Writing/Submission Section - Bottom Right */}

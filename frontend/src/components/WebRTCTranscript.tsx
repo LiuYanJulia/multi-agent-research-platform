@@ -29,6 +29,8 @@ export interface WebRTCTranscriptRef {
 
 interface WebRTCTranscriptProps {
   isPracticeMode?: boolean;
+  // Practice and actual-task layouts can place this live status above the chat instead of in the right pane.
+  compactStatus?: boolean;
   // Paper 2 (2026-09) test mode: called with the full list of completed transcript chunks
   // (one entry per finished segment, in completion order) every time a new segment completes,
   // so a page-level debug panel can show each chunk on its own line. undefined for the regular
@@ -67,7 +69,7 @@ interface PendingSpeechSegment {
   transcription: string;
 }
 
-const WebRTCTranscript = forwardRef<WebRTCTranscriptRef, WebRTCTranscriptProps>(({ isPracticeMode = false, onTranscriptUpdate, onTranscriptPartialUpdate, onSpeechActivity, sessionId }, ref) => {
+const WebRTCTranscript = forwardRef<WebRTCTranscriptRef, WebRTCTranscriptProps>(({ isPracticeMode = false, compactStatus = false, onTranscriptUpdate, onTranscriptPartialUpdate, onSpeechActivity, sessionId }, ref) => {
   const [isRecording, setIsRecording] = useState(false);
   // Paper 2 (2026-09): kept as an array of completed chunks (not a joined string) so the test
   // mode debug panel can render one line per chunk instead of one run-on paragraph. The array
@@ -690,17 +692,21 @@ const WebRTCTranscript = forwardRef<WebRTCTranscriptRef, WebRTCTranscriptProps>(
   }));
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: '0.75rem' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: '0.5rem' }}>
-        <div style={{
-          width: '8px',
-          height: '8px',
-          borderRadius: '50%',
-          backgroundColor: getStatusColor()
-        }}></div>
-        <span style={{ fontSize: '0.75rem', color: getStatusColor() }}>
-          {getStatusText()}
-        </span>
+    <div style={{ height: compactStatus ? 'auto' : '100%', display: 'flex', flexDirection: 'column', padding: compactStatus ? '0 0 0.75rem' : '0.75rem' }}>
+      <div
+        data-testid={compactStatus ? 'realtime-status-compact' : 'realtime-status'}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'flex-start', flexWrap: 'wrap', gap: '0.5rem',
+          ...(isRecording ? { padding: '0.5rem', backgroundColor: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '0.5rem' } : {}),
+        }}
+      >
+        {isRecording && <>
+          <div style={{ height: '0.5rem', width: '0.5rem', backgroundColor: '#3b82f6', borderRadius: '50%', animation: 'pulse 2s infinite' }} />
+          <span style={{ color: '#1e40af', fontSize: '0.75rem', fontWeight: '500' }}>Audio recording active - speak naturally</span>
+          <span style={{ color: '#94a3b8', fontSize: '0.75rem' }}>·</span>
+        </>}
+        <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: getStatusColor() }} />
+        <span style={{ fontSize: '0.75rem', color: getStatusColor() }}>{getStatusText()}</span>
       </div>
 
       {/* Error Display */}
@@ -715,31 +721,6 @@ const WebRTCTranscript = forwardRef<WebRTCTranscriptRef, WebRTCTranscriptProps>(
           fontSize: '0.75rem'
         }}>
           {error}
-        </div>
-      )}
-
-      {/* Recording Info - Show when recording is active */}
-      {isRecording && (
-        <div style={{
-          marginTop: '0.5rem',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.5rem',
-          padding: '0.5rem',
-          backgroundColor: '#f0f9ff',
-          border: '1px solid #bae6fd',
-          borderRadius: '0.5rem'
-        }}>
-          <div style={{
-            height: '0.5rem',
-            width: '0.5rem',
-            backgroundColor: '#3b82f6',
-            borderRadius: '50%',
-            animation: 'pulse 2s infinite'
-          }}></div>
-          <span style={{ color: '#1e40af', fontSize: '0.75rem', fontWeight: '500' }}>
-            Audio recording active - speak naturally
-          </span>
         </div>
       )}
 

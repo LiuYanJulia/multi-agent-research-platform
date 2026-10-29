@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import ChatInterface from '../components/ChatInterface';
 import WebRTCTranscript, { WebRTCTranscriptRef } from '../components/WebRTCTranscript';
+import GuidancePanel, { DisplayedGuidance } from '../components/GuidancePanel';
 import DebugPanel, { AgentStageEvent } from '../components/DebugPanel';
 import WritingSection from '../components/WritingSection';
 import Timer from '../components/Timer';
@@ -82,6 +83,9 @@ const ResearchPageActual: React.FC<ResearchPageActualProps> = ({
   const [showWritingReminder, setShowWritingReminder] = useState(false);
   const [writingPhaseStartElapsed, setWritingPhaseStartElapsed] = useState<number | null>(null);
   const [writingMinimumTimeReached, setWritingMinimumTimeReached] = useState(false);
+  const [displayedGuidance, setDisplayedGuidance] = useState<DisplayedGuidance[]>([]);
+  const [newlyDeliveredGuidanceId, setNewlyDeliveredGuidanceId] = useState<string | null>(null);
+  const guidanceFlashTimerRef = useRef<number | null>(null);
 
   const STANDARD_TIME_WARNING_SECONDS = 20 * 60;
   const STANDARD_TIME_LIMIT_SECONDS = 25 * 60;
@@ -92,6 +96,21 @@ const ResearchPageActual: React.FC<ResearchPageActualProps> = ({
   const SCHEDULED_END_SECONDS = 25 * 60;
   const EXTENDED_TIME_LIMIT_SECONDS = 27 * 60;
   const MIN_WRITING_PHASE_SECONDS = 4 * 60;
+
+  const handleGuidanceChange = React.useCallback((guidance: DisplayedGuidance[], newlyDeliveredId?: string) => {
+    setDisplayedGuidance(guidance.slice(-3));
+    if (!newlyDeliveredId) return;
+    setNewlyDeliveredGuidanceId(newlyDeliveredId);
+    if (guidanceFlashTimerRef.current !== null) window.clearTimeout(guidanceFlashTimerRef.current);
+    guidanceFlashTimerRef.current = window.setTimeout(() => {
+      setNewlyDeliveredGuidanceId(null);
+      guidanceFlashTimerRef.current = null;
+    }, 2_600);
+  }, []);
+
+  useEffect(() => () => {
+    if (guidanceFlashTimerRef.current !== null) window.clearTimeout(guidanceFlashTimerRef.current);
+  }, []);
 
   // Paper 2: fetch this session's manipulation condition/phase once on mount.
   useEffect(() => {
@@ -479,30 +498,36 @@ const ResearchPageActual: React.FC<ResearchPageActualProps> = ({
 
       <div className="main-grid bg-token-bg-primary text-token-text-primary">
         {/* LLM Chat Interface - Left Half */}
-        <div className="section-chat border border-gray-200 rounded-lg p-4 bg-token-bg-primary">
-          <ChatInterface
-            sessionId={sessionId}
-            sessionStartTime={sessionStartTime}
-            logger={logger}
-            onAgentStage={(stage) => setDebugStages(prev => [...prev, stage])}
-            transcriptChunks={transcriptChunks}
-            speechActivityAt={speechActivityAt}
-            promptingEnabled={!(isLowTF && manipulationPhase === 'synthesize')}
-          />
-        </div>
-
-        {/* Right Half - Transcript and Writing */}
-        <div className="section-right">
-          {/* Voice Transcript Section - Top Right */}
-          <div className="section-transcript border border-gray-200 rounded-lg p-4 bg-token-bg-primary">
+        <div className="section-chat border border-gray-200 rounded-lg p-4 bg-token-bg-primary" style={{ display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '0.75rem 1rem 0', flexShrink: 0 }}>
             <WebRTCTranscript
               ref={transcriptRef}
               isPracticeMode={false}
+              compactStatus
               sessionId={sessionId}
               onTranscriptUpdate={(chunks) => { setDebugTranscript(chunks); setTranscriptChunks(chunks); }}
               onTranscriptPartialUpdate={setDebugPartialTranscript}
               onSpeechActivity={setSpeechActivityAt}
             />
+          </div>
+          <div style={{ flex: '1 1 0', minHeight: 0 }}>
+            <ChatInterface
+              sessionId={sessionId}
+              sessionStartTime={sessionStartTime}
+              logger={logger}
+              onAgentStage={(stage) => setDebugStages(prev => [...prev, stage])}
+              transcriptChunks={transcriptChunks}
+              speechActivityAt={speechActivityAt}
+              promptingEnabled={!(isLowTF && manipulationPhase === 'synthesize')}
+              onGuidanceChange={handleGuidanceChange}
+            />
+          </div>
+        </div>
+
+        {/* Right Half - Proactive guidance above final writing */}
+        <div className="section-right section-right-with-guidance">
+          <div className="section-guidance">
+            <GuidancePanel guidance={displayedGuidance} newlyDeliveredId={newlyDeliveredGuidanceId} />
           </div>
 
           {/* Final Writing/Submission Section - Bottom Right */}

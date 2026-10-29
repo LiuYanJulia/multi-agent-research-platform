@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { AgentStageEvent } from './DebugPanel';
+import { DisplayedGuidance } from './GuidancePanel';
 
 interface Message {
   id: string;
@@ -34,6 +35,7 @@ interface ChatInterfaceProps {
   speechActivityAt?: number;
   // Low-TF Phase 2 disables participant-initiated prompts but keeps automatic AI guidance active.
   promptingEnabled?: boolean;
+  onGuidanceChange?: (guidance: DisplayedGuidance[], newlyDeliveredId?: string) => void;
 }
 
 interface DirectGuidancePayload {
@@ -73,6 +75,15 @@ const MemoizedMarkdown = memo(({ content }: { content: string }) => {
 });
 MemoizedMarkdown.displayName = 'MemoizedMarkdown';
 
+function asDisplayedGuidance(message: Message): DisplayedGuidance {
+  return {
+    id: message.id,
+    content: message.content,
+    displaySummary: message.guidanceDisplaySummary,
+    timestamp: message.timestamp,
+  };
+}
+
 // The Debug Panel is the primary transcript viewer. Keep the browser console
 // focused on the evaluator's audit trail instead of printing every speech chunk.
 function logEvaluationAgentStage(stage: AgentStageEvent): void {
@@ -101,7 +112,7 @@ function logEvaluationAgentStage(stage: AgentStageEvent): void {
   }
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTime, logger, onAgentStage, transcriptChunks = [], speechActivityAt = 0, promptingEnabled = true }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTime, logger, onAgentStage, transcriptChunks = [], speechActivityAt = 0, promptingEnabled = true, onGuidanceChange }) => {
   const [prompt, setPrompt] = useState('');
   const [composerHeight, setComposerHeight] = useState(40);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -112,6 +123,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const guidanceForPanelRef = useRef<DisplayedGuidance[]>([]);
   const analyzedTranscriptCountRef = useRef(0);
   const availableTranscriptCountRef = useRef(0);
   const lastAutomaticAnalysisTranscriptCountRef = useRef(0);
@@ -290,8 +302,16 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
             displaySummary: deferredGuidance.guidanceDisplaySummary ?? '', response: deferredGuidance.content, displayAt: deferredGuidance.guidanceDisplayAt.toISOString(),
           });
         }
-        // Sort messages by timestamp to ensure proper conversation order.
-        const visibleMessages = deferredGuidance ? loadedMessages.filter((message) => message !== deferredGuidance) : loadedMessages;
+        const deliveredGuidance = loadedMessages
+          .filter((message) => message.role === 'ai_guidance' && (!message.guidanceDisplayAt || message.guidanceDisplayAt.getTime() <= Date.now()))
+          .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+          .map(asDisplayedGuidance)
+          .slice(-3);
+        guidanceForPanelRef.current = deliveredGuidance;
+        onGuidanceChange?.(deliveredGuidance);
+
+        // Guidance cards render in the page-level panel; the chat keeps conversational turns only.
+        const visibleMessages = loadedMessages.filter((message) => message.role !== 'ai_guidance');
         visibleMessages.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
         setMessages(visibleMessages);
@@ -340,15 +360,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
         guidanceDisplaySummary: pendingGuidance.displaySummary,
         guidanceDisplayAt: new Date(displayAt),
       };
-      setMessages((existing) => existing.some((message) => message.id === card.id) ? existing : [...existing, card]);
-      logger.logEvent({ eventType: 'ai_guidance', action: 'ai_guidance_displayed', target: { element: 'ai-guidance-card', section: 'response', text: `${pendingGuidance.displaySummary}\n\n${pendingGuidance.response}` }, metadata: { messageId: pendingGuidance.messageId, displayDelayMs: 5000, directionGuidance: pendingGuidance.directionGuidance, previousIdeas: pendingGuidance.previousIdeas, responseLength: pendingGuidance.response.length } });
+      const nextGuidance = guidanceForPanelRef.current.some((guidance) => guidance.id === card.id)
+        ? guidanceForPanelRef.current
+        : [...guidanceForPanelRef.current, asDisplayedGuidance(card)].slice(-3);
+      guidanceForPanelRef.current = nextGuidance;
+      onGuidanceChange?.(nextGuidance, card.id);
+      logger.logEvent({ eventType: 'ai_guidance', action: 'ai_guidance_displayed', target: { element: 'ai-guidance-panel-card', section: 'guidance', text: `${pendingGuidance.displaySummary}\n\n${pendingGuidance.response}` }, metadata: { messageId: pendingGuidance.messageId, displayDelayMs: 5000, directionGuidance: pendingGuidance.directionGuidance, previousIdeas: pendingGuidance.previousIdeas, responseLength: pendingGuidance.response.length } });
       void logger.sendBatch();
       setPendingGuidance(null);
       setGuidanceCountdown(null);
-      scrollToBlockStart(card.id);
     }, Math.max(0, displayAt - Date.now()));
     return () => { window.clearInterval(interval); window.clearTimeout(timer); };
-  }, [logger, pendingGuidance]);
+  }, [logger, onGuidanceChange, pendingGuidance]);
 
   const handleSend = async (contextMessageId?: string, customPrompt?: string, hideUserPrompt?: boolean, isGuidanceMessage = false) => {
     if (!promptingEnabled && !isGuidanceMessage) return;
@@ -1317,7 +1340,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
               </p>
             </div>
           ) : (
-            messages.map((message, index) => renderMessageBubble(message, index + 1, index + 1, promptingEnabled))
+            messages
+              .filter((message) => message.role !== 'ai_guidance')
+              .map((message, index) => renderMessageBubble(message, index + 1, index + 1, promptingEnabled))
           )}
           {/* Scroll anchor */}
           <div ref={messagesEndRef} />
