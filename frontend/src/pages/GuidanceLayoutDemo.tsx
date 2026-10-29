@@ -73,7 +73,6 @@ function TranscriptDemo() {
         <span className="guidance-demo-connected-dot is-connected" />
         <span style={{ fontSize: '0.75rem', color: '#22c55e' }}>Connected</span>
       </div>
-      <div className="guidance-demo-transcript-copy">“The service should not assume every resident can travel to a single cooling centre…”</div>
     </div>
   );
 }
