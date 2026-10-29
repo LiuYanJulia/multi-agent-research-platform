@@ -6,6 +6,7 @@ import WelcomePractice from './components/WelcomePractice';
 import WelcomeActual from './components/WelcomeActual';
 import ResearchPagePractice from './pages/ResearchPagePractice';
 import ResearchPageActual from './pages/ResearchPageActual';
+import GuidanceLayoutDemo from './pages/GuidanceLayoutDemo';
 
 // Resume-on-refresh (2026-09): all of the state below used to live only in React state, which
 // resets to blank on any page refresh/crash while a participant is mid-task (userId/groupId
@@ -266,7 +267,11 @@ function AppContent() {
 function App() {
   return (
     <Router>
-      <AppContent />
+      <Routes>
+        {/* A self-contained visual prototype. It deliberately bypasses session restoration and APIs. */}
+        <Route path="/guidance-layout-demo" element={<GuidanceLayoutDemo />} />
+        <Route path="*" element={<AppContent />} />
+      </Routes>
     </Router>
   );
 }

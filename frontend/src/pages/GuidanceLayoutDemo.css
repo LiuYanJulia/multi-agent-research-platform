@@ -1,0 +1,30 @@
+.guidance-demo-root { background: var(--token-bg-primary, #ffffff); }
+.guidance-demo-controls { position: fixed; z-index: 100; right: 1rem; bottom: 1rem; display: flex; align-items: center; gap: .4rem; padding: .45rem; color: #4b5563; font-size: .75rem; background: rgba(255,255,255,.96); border: 1px solid #d1d5db; border-radius: .5rem; box-shadow: 0 4px 16px rgba(0,0,0,.12); }
+.guidance-demo-controls button { padding: .4rem .55rem; color: #374151; font: inherit; background: #f9fafb; border: 1px solid #d1d5db; border-radius: .375rem; cursor: pointer; }
+.guidance-demo-controls button.selected { color: white; background: #2563eb; border-color: #2563eb; }
+.guidance-demo-chat-inner, .guidance-demo-writing-inner, .guidance-demo-guidance-inner { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.guidance-demo-notification { width: 100%; box-sizing: border-box; margin-bottom: .75rem; padding: .625rem .875rem; color: #065f46; font-size: .8125rem; font-weight: 600; background: #ecfdf5; border: 1px solid #6ee7b7; border-radius: .5rem; }
+.guidance-demo-messages { flex: 1 1 0; min-height: 0; margin-bottom: 1rem; overflow-y: auto; overflow-x: hidden; }
+.guidance-demo-assistant, .guidance-demo-user, .guidance-demo-panel-message { margin-bottom: 1rem; padding: .7rem .9rem; font-size: .9375rem; line-height: 1.5; border-radius: .75rem; }
+.guidance-demo-assistant { max-width: 88%; color: #374151; background: #f9fafb; }
+.guidance-demo-user { max-width: 70%; margin-left: auto; color: #111827; background: #f3f4f6; }
+.guidance-demo-panel-message { color: #047857; font-size: .8125rem; background: #ecfdf5; border: 1px solid #a7f3d0; }
+.guidance-demo-card { width: 100%; margin-bottom: 1rem; padding: .75rem 1rem; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 12px; }
+.guidance-demo-card p { margin: 0 0 .5rem; }
+.guidance-demo-point { position: relative; margin: .3rem 0 .3rem 1rem; }
+.guidance-demo-point::before { position: absolute; left: -.75rem; content: '•'; }
+@keyframes guidance-demo-attention { 0%,100% { background:#ecfdf5; border-color:#a7f3d0; } 50% { background:#bbf7d0; border-color:#059669; box-shadow:0 0 0 3px rgba(5,150,105,.2); } }
+.guidance-demo-flash { animation: guidance-demo-attention .52s ease-in-out 5; }
+.guidance-demo-composer { display: flex; align-items: center; justify-content: space-between; padding: .625rem .75rem; color: #9ca3af; font-size: .875rem; border: 1px solid #d1d5db; border-radius: .5rem; }
+.guidance-demo-composer button { width: 1.75rem; height: 1.75rem; color: white; background: #111827; border: 0; border-radius: .375rem; }
+.guidance-demo-panel-layout .section-right { grid-template-rows: auto minmax(0,33vh) minmax(0,1fr); }
+.section-guidance { min-height: 0; overflow: hidden; }
+.guidance-demo-guidance-scroll { flex: 1 1 0; min-height: 0; overflow-y: auto; }
+.guidance-demo-audio-status { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; padding: .5rem; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: .5rem; }
+.guidance-demo-connected-dot { width: .5rem; height: .5rem; background: #3b82f6; border-radius: 50%; animation: pulse 2s infinite; }
+.guidance-demo-connected-dot.is-connected { width: 8px; height: 8px; background: #22c55e; animation: none; }
+.guidance-demo-status-divider { color: #94a3b8; }
+.guidance-demo-transcript-copy { margin-top: .75rem; color: #6b7280; font-size: .875rem; line-height: 1.5; }
+.guidance-demo-writing-inner textarea { flex: 1; min-height: 0; width: 100%; padding: 1rem; color: #374151; font: .875rem/1.625 inherit; resize: none; outline: none; border: 1px solid #e5e7eb; border-radius: .5rem; }
+.guidance-demo-submit { display: block; width: 100%; padding: .75rem 1rem; color: white; font-weight: 500; background: #22c55e; border: 0; border-radius: .5rem; cursor: pointer; }
+@media (max-width:768px) { .guidance-demo-controls { right:.5rem; bottom:.5rem; max-width:calc(100vw - 1rem); overflow-x:auto; } .guidance-demo-controls span { display:none; } .guidance-demo-panel-layout .section-right { grid-template-rows:auto 33vh minmax(320px,1fr); } }
