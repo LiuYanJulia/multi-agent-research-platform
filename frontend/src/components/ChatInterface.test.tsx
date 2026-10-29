@@ -89,12 +89,12 @@ describe('ChatInterface streaming', () => {
       timestamp: '2026-10-29T00:00:00.000Z',
       guidanceDirection: 'Explore two nearby design variations.',
       guidancePreviousIdeas: ['peer mentoring', 'skill tracker'],
-      guidanceDisplaySummary: 'Based on your 2 earlier ideas, AI provides 2 ideas for you to consider.',
+      guidanceDisplaySummary: '[Exploration] Based on your 2 earlier ideas, AI provides 2 ideas for you to consider.',
     }];
 
     render(<ChatInterface sessionId="guidance-session" sessionStartTime={0} logger={logger} />);
 
-    expect(await screen.findByText('Based on your 2 earlier ideas, AI provides 2 ideas for you to consider.')).toBeInTheDocument();
+    expect(await screen.findByText('[Exploration] Based on your 2 earlier ideas, AI provides 2 ideas for you to consider.')).toBeInTheDocument();
     expect(screen.getByText('Start with one concise direction, then develop the key details.')).toBeInTheDocument();
     expect(screen.queryByText('Explore two nearby design variations.')).not.toBeInTheDocument();
     expect(screen.queryByText(/Your earlier ideas: peer mentoring, skill tracker/)).not.toBeInTheDocument();

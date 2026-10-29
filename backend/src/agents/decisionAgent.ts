@@ -19,7 +19,7 @@ export interface DecisionResult {
   modelUsed: string;
 }
 
-const DECISION_SYSTEM_PROMPT = `You determine the orientation of the newest design move in an adult-learning platform proposal session.
+const DECISION_SYSTEM_PROMPT = `You determine the orientation of the newest design move in a community heat-resilience support system proposal session.
 
 Return D (divergent) when the newest move primarily introduces a genuinely new idea or direction. Return C (convergent) when it primarily develops, references, assesses, supports, combines, adopts, or rejects earlier ideas. Judge the actual content first. Evaluate, Adopt, and Reject moves are only a weak prior toward C, never a hard rule.
 

@@ -358,17 +358,23 @@ export function fixedDirectionGuidance(spec: Pick<GuidanceSpec, 'targetOrientati
 export function guidanceDisplaySummary(spec: Pick<GuidanceSpec, 'targetOrientation' | 'magnitude' | 'selectedContextMoves' | 'requiredIdeaCount'>): string {
   const moveCount = spec.selectedContextMoves.length;
   const moveLabel = moveCount === 1 ? 'idea' : 'ideas';
+  const orientationLabel = spec.targetOrientation === 'D' ? '[Exploration]' : '[Synthesis]';
   if (spec.targetOrientation === 'D') {
     const generatedIdeaCount = spec.requiredIdeaCount ?? (spec.magnitude === 'high' ? 6 : 2);
     const generatedIdeaLabel = generatedIdeaCount === 1 ? 'idea' : 'ideas';
-    return `Based on your ${moveCount} earlier ${moveLabel}, AI provides ${generatedIdeaCount} ${generatedIdeaLabel} for you to consider.`;
+    return `${orientationLabel} Based on your ${moveCount} earlier ${moveLabel}, AI provides ${generatedIdeaCount} ${generatedIdeaLabel} for you to consider.`;
   }
   const connectionSize = spec.magnitude === 'high' ? 'big' : 'small';
-  return `Based on your ${moveCount} earlier ${moveLabel}, AI provides one ${connectionSize} connection idea for you to consider.`;
+  return `${orientationLabel} Based on your ${moveCount} earlier ${moveLabel}, AI provides one ${connectionSize} connection idea for you to consider.`;
+}
+
+export function guidanceResponseWordLimit(targetOrientation: Orientation, magnitude: TmLevel): number {
+  if (targetOrientation === 'D') return magnitude === 'high' ? 120 : 40;
+  return magnitude === 'high' ? 70 : 40;
 }
 
 function makePromptForResponse(spec: Pick<GuidanceSpec, 'targetOrientation' | 'magnitude' | 'recentWritingContext'>, directionGuidance: string, previousIdeas: string[]): string {
-  const wordLimit = spec.targetOrientation === 'D' && spec.magnitude === 'high' ? 140 : 90;
+  const wordLimit = guidanceResponseWordLimit(spec.targetOrientation, spec.magnitude);
   const writingDelta = spec.recentWritingContext.length
     ? spec.recentWritingContext.map((change) => `${change.type.toUpperCase()}: ${change.content}`).join('\n')
     : 'No meaningful recent writing change was available.';

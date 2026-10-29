@@ -59,7 +59,7 @@ const MAX_UNCOMMITTED_SPEECH_MS = 4000;
 // on session.update for the same reason the model/delay fields are resent (belt-and-suspenders
 // in case the data channel opens before the backend's /session config is fully applied).
 const TRANSCRIPTION_PROMPT =
-  'A user is collaborating with an AI chatbot to create a helpful, creative career-development learning platform proposal for adults.';
+  'A user is collaborating with an AI chatbot to develop a creative and useful community heat-resilience support system proposal.';
 
 interface PendingSpeechSegment {
   timestampStart: number; // absolute epoch ms - see comment on the backend route for why

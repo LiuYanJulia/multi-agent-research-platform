@@ -60,23 +60,23 @@ const WelcomeActual: React.FC<WelcomeActualProps> = ({ onStart, groupId }) => {
               fontWeight: '600',
               marginBottom: '1rem'
             }} className="text-token-text-primary">
-              Your Task: Brainstorm New Ideas for a Career-Development Website
+              Your Task: Design a Community Heat-Resilience Support System
             </h2>
             <p style={{ marginBottom: '0.75rem' }}>
-              Please brainstorm new ideas for a career-development website and write a proposal presenting your ideas.
+              Imagine that your city is facing more frequent and severe heatwaves. During these periods, many residents struggle to stay safe and well, especially older adults living alone, outdoor workers, and households without reliable cooling.
             </p>
             <p style={{ marginBottom: '0.75rem' }}>
-              Many existing career-development websites offer familiar services, such as CV refinement and mock interviews. Your goal is to propose features, formats, or pipelines that could make a career-development website meaningfully different from what is already available.
+              Please develop a proposal for a community heat-resilience support system that could help residents prepare for, cope with, and recover from extreme heat. The city has limited public resources, so consider how support could reach people in practical and meaningful ways.
             </p>
             <p style={{ marginBottom: '0.75rem' }}>
-              Your proposal should introduce your ideas and explain how they would work. It will be evaluated on two criteria:
+              You may propose services, community networks, physical spaces, information systems, partnerships, or combinations of these. Your proposal will be evaluated on two criteria:
             </p>
             <ul style={{ margin: '0 0 0.75rem', paddingLeft: '1.5rem' }}>
               <li><strong>Creativity:</strong> How original, distinctive, and imaginative are the ideas?</li>
-              <li><strong>Usefulness:</strong> How well could the ideas help users with their career development?</li>
+              <li><strong>Usefulness:</strong> How well could the ideas help people and communities reduce heat-related risks while using lower resources?</li>
             </ul>
             <p style={{ marginBottom: 0 }}>
-              You may focus on new website features, end-to-end user journeys, interaction formats, or service pipelines. The final output should be a <strong>proposal for new ideas for a career-development website</strong>, clearly presenting the ideas and their potential value.
+              Your final output should be a clear proposal explaining your ideas and how they could create value during periods of extreme heat.
             </p>
           </div>
 
@@ -96,7 +96,7 @@ const WelcomeActual: React.FC<WelcomeActualProps> = ({ onStart, groupId }) => {
               ⚠️ Important Reminder:
             </p>
             <p style={{ color: '#92400e' }}>
-              Do not focus on technical details. Rather than a programmer or software engineer, please treat yourself as a <strong>product manager</strong>, to brainstorm creative and useful new ideas or features for the website, focusing on user needs, features, and experiences rather than implementation details.
+              You do not need to focus on technical implementation details. Focus on people&apos;s needs, service experiences, partnerships, and how different parts of the system could work together.
             </p>
           </div>
 

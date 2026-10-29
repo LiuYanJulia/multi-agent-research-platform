@@ -116,7 +116,7 @@ const upload = multer({
 // platform, so turn detection is disabled server-side. The browser runs a small local silence
 // detector and manually commits each audio chunk after 500ms of silence.
 const TRANSCRIPTION_PROMPT =
-  'A user is collaborating with an AI chatbot to create a helpful, creative career-development learning platform proposal for adults.';
+  'A user is collaborating with an AI chatbot to develop a creative and useful community heat-resilience support system proposal.';
 
 router.post('/session', async (req, res) => {
   try {

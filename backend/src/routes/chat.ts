@@ -4,12 +4,17 @@ import { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { isPracticeSession } from '../utils/sessionUtils';
 import { AgentStageEvent, runIncrementalPipeline, logMainResponseTurn } from '../services/manipulationPipeline';
 import { guidanceDisplaySummary } from '../agents/manipulationController';
+import { GUIDANCE_NOTIFICATION_COOLDOWN_SECONDS } from '../services/guidanceDelivery';
 
 const router = express.Router();
 
-const MAIN_RESPONSE_SYSTEM_PROMPT = `The user is acting as a product manager and is brainstorming new ideas, features, learning experiences, interaction formats, and user pipelines for a career-development website.
+const MAIN_RESPONSE_SYSTEM_PROMPT = `The user is designing a community heat-resilience support system for a city facing more frequent and severe heatwaves.
 
-Help the user explore, develop, and refine ideas for a proposal for new ideas for a career-development website. Encourage creative but useful thinking, especially ideas that go beyond common services such as CV refinement and mock interviews. The user may explore individual features, user journeys, learning pipelines, formats of interaction, or combinations of these elements.`;
+The system should help residents prepare for, cope with, and recover from extreme heat, especially older adults living alone, outdoor workers, and households without reliable cooling. The city has limited public resources.
+
+Help the user explore, develop, and refine a proposal. Encourage creative and useful ideas. The user may consider services, community networks, physical spaces, information systems, partnerships, user journeys, or combinations of these. Focus on people’s needs and service experiences rather than technical implementation details.
+
+Keep responses concise and focused. Use brief explanations and avoid unnecessarily long or exhaustive answers.`;
 
 /** Practice responses intentionally use the participant's prompt and conversation only. */
 function mainResponseSystemMessages(sessionId: string): ChatCompletionMessageParam[] {
@@ -85,7 +90,7 @@ router.post('/analyze', async (req, res) => {
          SET last_guidance_notification_at = CURRENT_TIMESTAMP
          WHERE session_id = ?
            AND (last_guidance_notification_at IS NULL
-                OR last_guidance_notification_at <= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 60 SECOND))`,
+                OR last_guidance_notification_at <= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL ${GUIDANCE_NOTIFICATION_COOLDOWN_SECONDS} SECOND))`,
         [sessionId]
       );
       if (Number((reservation as any).affectedRows ?? 0) === 0) {
