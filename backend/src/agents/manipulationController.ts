@@ -355,9 +355,24 @@ export function fixedDirectionGuidance(spec: Pick<GuidanceSpec, 'targetOrientati
   return `${prefix} making one small connection between two of these ideas to refine your current direction.`;
 }
 
-function makePromptForResponse(spec: Pick<GuidanceSpec, 'targetOrientation' | 'magnitude'>, directionGuidance: string, previousIdeas: string[]): string {
-  const wordLimit = spec.targetOrientation === 'D' && spec.magnitude === 'high' ? 160 : 110;
-  return `${directionGuidance}\n\nYour earlier ideas: ${previousIdeas.join(', ')}\n\nUse these keywords only as topical seeds. Keep the output concise and coherent. Stay within ${wordLimit} English words. Start directly with the requested design content. Do not add a preamble, repeat the guidance, or end with a follow-up question. Never ask the participant to paste, provide, or restate a previous AI response or prior chat content.`;
+export function guidanceDisplaySummary(spec: Pick<GuidanceSpec, 'targetOrientation' | 'magnitude' | 'selectedContextMoves' | 'requiredIdeaCount'>): string {
+  const moveCount = spec.selectedContextMoves.length;
+  const moveLabel = moveCount === 1 ? 'idea' : 'ideas';
+  if (spec.targetOrientation === 'D') {
+    const generatedIdeaCount = spec.requiredIdeaCount ?? (spec.magnitude === 'high' ? 6 : 2);
+    const generatedIdeaLabel = generatedIdeaCount === 1 ? 'idea' : 'ideas';
+    return `Based on your ${moveCount} earlier ${moveLabel}, AI provides ${generatedIdeaCount} ${generatedIdeaLabel} for you to consider.`;
+  }
+  const connectionSize = spec.magnitude === 'high' ? 'big' : 'small';
+  return `Based on your ${moveCount} earlier ${moveLabel}, AI provides one ${connectionSize} connection idea for you to consider.`;
+}
+
+function makePromptForResponse(spec: Pick<GuidanceSpec, 'targetOrientation' | 'magnitude' | 'recentWritingContext'>, directionGuidance: string, previousIdeas: string[]): string {
+  const wordLimit = spec.targetOrientation === 'D' && spec.magnitude === 'high' ? 140 : 90;
+  const writingDelta = spec.recentWritingContext.length
+    ? spec.recentWritingContext.map((change) => `${change.type.toUpperCase()}: ${change.content}`).join('\n')
+    : 'No meaningful recent writing change was available.';
+  return `${directionGuidance}\n\nYour earlier ideas: ${previousIdeas.join(', ')}\n\nRecent writing delta (context only):\n${writingDelta}\n\nUse the earlier-idea keywords and writing delta only as topical context. Stay within ${wordLimit} English words. Start with one sentence that summarizes the proposed direction. On a new line, use concise Markdown point form to elaborate the design; for divergent guidance, use a numbered list that preserves the requested number of ideas. Do not add a preamble, repeat the guidance, or end with a follow-up question. Never ask the participant to paste, provide, or restate a previous AI response or prior chat content.`;
 }
 
 function makeGuidanceRuntimeInput(spec: GuidanceSpec): string {

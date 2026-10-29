@@ -478,7 +478,7 @@ export interface TimelineRowsInput {
   recordingStartEpochMs?: number | null;
   interactionLogs: InteractionLog[];
   speechSegments: Array<{ id: number; timestamp_start: number; timestamp_end: number; transcription: string | null }>;
-  messages: Array<{ id: number; role: 'user' | 'assistant' | 'ai_guidance'; content: string; is_guidance?: boolean | number; guidance_direction?: string | null; guidance_previous_ideas?: unknown; guidance_display_at?: string | Date | null; timestamp: string | Date }>;
+  messages: Array<{ id: number; role: 'user' | 'assistant' | 'ai_guidance'; content: string; is_guidance?: boolean | number; guidance_direction?: string | null; guidance_previous_ideas?: unknown; guidance_display_summary?: string | null; guidance_display_at?: string | Date | null; timestamp: string | Date }>;
   // Context only: this row was already consumed by the message source cursor
   // and is never emitted again. It lets a newly-arrived assistant response keep
   // the conventional +1s placement after its preceding user message.
@@ -540,11 +540,8 @@ export function buildTimelineEventsFromRows(input: TimelineRowsInput): TimelineE
       pending.push({ timestampStart: sourceTimestamp, timestampEnd: sourceTimestamp, eventType: 'user_message', actionDescription: '', speech: '', userMessage: text(row.content), aiResponse: '' });
       continue;
     }
-    const previousIdeas = row.guidance_previous_ideas
-      ? (typeof row.guidance_previous_ideas === 'string' ? JSON.parse(row.guidance_previous_ideas) : row.guidance_previous_ideas)
-      : [];
     const timelineContent = row.role === 'ai_guidance'
-      ? [row.guidance_direction, Array.isArray(previousIdeas) && previousIdeas.length ? `Your earlier ideas: ${previousIdeas.join(', ')}` : '', row.content].filter(Boolean).join('\n\n')
+      ? [row.guidance_display_summary, row.content].filter(Boolean).join('\n\n')
       : text(row.content);
     // This is a presentation timestamp applied after source-row selection.
     // It must not affect source cursor movement or which rows are evaluated.
@@ -623,7 +620,7 @@ async function materializeTimelineDeltaOnce(db: SqlExecutor, sessionId: string, 
   const [logRows, speechRows, messageRows, priorUserRows] = await Promise.all([
     db.execute('SELECT id, event_type, action, target_element, target_section, text_content, metadata, timestamp FROM interaction_logs WHERE session_id = ? AND id > ? ORDER BY id ASC', [sessionId, cursors.get('interaction_logs') ?? 0]),
     db.execute('SELECT id, timestamp_start, timestamp_end, transcription FROM speech_segments WHERE session_id = ? AND id > ? ORDER BY id ASC', [sessionId, cursors.get('speech_segments') ?? 0]),
-    db.execute('SELECT id, role, content, is_guidance, guidance_direction, guidance_previous_ideas, guidance_display_at, timestamp FROM messages WHERE session_id = ? AND id > ? ORDER BY id ASC', [sessionId, messageCursor]),
+    db.execute('SELECT id, role, content, is_guidance, guidance_direction, guidance_previous_ideas, guidance_display_summary, guidance_display_at, timestamp FROM messages WHERE session_id = ? AND id > ? ORDER BY id ASC', [sessionId, messageCursor]),
     messageCursor > 0
       ? db.execute("SELECT timestamp FROM messages WHERE session_id = ? AND role = 'user' AND id <= ? ORDER BY id DESC LIMIT 1", [sessionId, messageCursor])
       : Promise.resolve([[]]),

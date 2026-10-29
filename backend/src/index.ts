@@ -415,6 +415,7 @@ async function createTables() {
     await ensureColumn('messages', 'is_guidance', "BOOLEAN DEFAULT FALSE");
     await ensureColumn('messages', 'guidance_direction', "TEXT NULL");
     await ensureColumn('messages', 'guidance_previous_ideas', "JSON NULL");
+    await ensureColumn('messages', 'guidance_display_summary', "TEXT NULL");
     await ensureColumn('messages', 'guidance_display_at', "TIMESTAMP NULL");
     await ensureColumn('submissions', 'evaluation_audit_json_file_url', "VARCHAR(255) NULL");
     await ensureColumn('submissions', 'evaluation_audit_markdown_file_url', "VARCHAR(255) NULL");

@@ -50,6 +50,13 @@ export interface AgentStageEvent {
   };
   /** Exact messages supplied to generate the visible AI-response portion of a guidance card. */
   guidanceResponseInput?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+  /** Full three-part guidance card, retained for test-mode auditing only. */
+  guidanceCard?: {
+    displaySummary: string;
+    directionGuidance: string;
+    previousIdeas: string[];
+    response: string;
+  };
   moves?: DebugMove[];
   moveCounts?: { d: number; c: number };
   streak?: { orientation: 'D' | 'C' | null; count: number; suppressionRemaining?: number };

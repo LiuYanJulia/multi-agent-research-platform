@@ -3,6 +3,7 @@ import OpenAI from 'openai';
 import { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { isPracticeSession } from '../utils/sessionUtils';
 import { AgentStageEvent, runIncrementalPipeline, logMainResponseTurn } from '../services/manipulationPipeline';
+import { guidanceDisplaySummary } from '../agents/manipulationController';
 
 const router = express.Router();
 
@@ -19,7 +20,9 @@ function mainResponseSystemMessages(sessionId: string): ChatCompletionMessagePar
 
 async function createDirectGuidancePayload(db: any, sessionId: string, result: any) {
   const guidance = result.instruction?.guidance;
-  if (!guidance) return null;
+  const guidanceSpec = result.instruction?.guidanceSpec;
+  if (!guidance || !guidanceSpec) return null;
+  const displaySummary = guidanceDisplaySummary(guidanceSpec);
   const modelName = process.env.OPENAI_MODEL || 'gpt-5.6-terra';
   const [rows] = await db.execute('SELECT role, content FROM messages WHERE session_id = ? ORDER BY timestamp ASC', [sessionId]);
   const context: ChatCompletionMessageParam[] = (rows as any[]).map((row): ChatCompletionMessageParam => ({
@@ -47,9 +50,9 @@ async function createDirectGuidancePayload(db: any, sessionId: string, result: a
   if (!response) throw new Error('Direct guidance response was empty');
   const displayAt = new Date(Date.now() + 5_000);
   const [insert] = await db.execute(
-    `INSERT INTO messages (session_id, role, content, model_slug, is_guidance, guidance_direction, guidance_previous_ideas, guidance_display_at)
-     VALUES (?, 'ai_guidance', ?, ?, FALSE, ?, ?, ?)`,
-    [sessionId, response, modelName, guidance.directionGuidance, JSON.stringify(guidance.previousIdeas), displayAt]
+    `INSERT INTO messages (session_id, role, content, model_slug, is_guidance, guidance_direction, guidance_previous_ideas, guidance_display_summary, guidance_display_at)
+     VALUES (?, 'ai_guidance', ?, ?, FALSE, ?, ?, ?, ?)`,
+    [sessionId, response, modelName, guidance.directionGuidance, JSON.stringify(guidance.previousIdeas), displaySummary, displayAt]
   );
   if (result.turnIndex !== undefined) {
     await logMainResponseTurn(db, sessionId, result.turnIndex, {
@@ -59,7 +62,7 @@ async function createDirectGuidancePayload(db: any, sessionId: string, result: a
   }
   return {
     messageId: Number((insert as any).insertId), directionGuidance: guidance.directionGuidance,
-    previousIdeas: guidance.previousIdeas, response, displayAt: displayAt.toISOString(), guidanceResponseInput,
+    previousIdeas: guidance.previousIdeas, displaySummary, response, displayAt: displayAt.toISOString(), guidanceResponseInput,
   };
 }
 
@@ -96,6 +99,12 @@ router.post('/analyze', async (req, res) => {
         detail: 'Generated the AI-response portion of the guidance card.',
         modelUsed: process.env.OPENAI_MODEL || 'gpt-5.6-terra',
         guidanceResponseInput: guidance.guidanceResponseInput,
+        guidanceCard: {
+          displaySummary: guidance.displaySummary,
+          directionGuidance: guidance.directionGuidance,
+          previousIdeas: guidance.previousIdeas,
+          response: guidance.response,
+        },
         timestamp: Date.now(),
       });
     }
@@ -536,7 +545,7 @@ router.get('/history', async (req, res) => {
 
     const [rows] = await db.execute(
       `SELECT id, role, content, model_slug, is_guidance, guidance_direction,
-              guidance_previous_ideas, guidance_display_at, timestamp
+              guidance_previous_ideas, guidance_display_summary, guidance_display_at, timestamp
        FROM messages WHERE session_id = ? ORDER BY timestamp ASC`,
       [sessionId]
     );
@@ -551,6 +560,7 @@ router.get('/history', async (req, res) => {
       guidancePreviousIdeas: row.guidance_previous_ideas
         ? (typeof row.guidance_previous_ideas === 'string' ? JSON.parse(row.guidance_previous_ideas) : row.guidance_previous_ideas)
         : undefined,
+      guidanceDisplaySummary: row.guidance_display_summary ?? undefined,
       guidanceDisplayAt: row.guidance_display_at ?? undefined,
       timestamp: row.timestamp,
     }));

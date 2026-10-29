@@ -16,6 +16,7 @@ interface Message {
   isGuidance?: boolean; // compatibility with historical Insert records
   guidanceDirection?: string;
   guidancePreviousIdeas?: string[];
+  guidanceDisplaySummary?: string;
   guidanceDisplayAt?: Date;
 }
 
@@ -39,6 +40,7 @@ interface DirectGuidancePayload {
   messageId: number;
   directionGuidance: string;
   previousIdeas: string[];
+  displaySummary: string;
   response: string;
   displayAt: string;
   guidanceResponseInput?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
@@ -276,6 +278,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
           isGuidance: !!msg.isGuidance,
           guidanceDirection: msg.guidanceDirection,
           guidancePreviousIdeas: msg.guidancePreviousIdeas,
+          guidanceDisplaySummary: msg.guidanceDisplaySummary,
           guidanceDisplayAt: msg.guidanceDisplayAt ? new Date(msg.guidanceDisplayAt) : undefined,
         }));
 
@@ -284,7 +287,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
           setPendingGuidance({
             messageId: Number(String(deferredGuidance.id).replace('guidance-', '')),
             directionGuidance: deferredGuidance.guidanceDirection ?? '', previousIdeas: deferredGuidance.guidancePreviousIdeas ?? [],
-            response: deferredGuidance.content, displayAt: deferredGuidance.guidanceDisplayAt.toISOString(),
+            displaySummary: deferredGuidance.guidanceDisplaySummary ?? '', response: deferredGuidance.content, displayAt: deferredGuidance.guidanceDisplayAt.toISOString(),
           });
         }
         // Sort messages by timestamp to ensure proper conversation order.
@@ -334,10 +337,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
         role: 'ai_guidance', content: pendingGuidance.response, timestamp: new Date(displayAt),
         guidanceDirection: pendingGuidance.directionGuidance,
         guidancePreviousIdeas: pendingGuidance.previousIdeas,
+        guidanceDisplaySummary: pendingGuidance.displaySummary,
         guidanceDisplayAt: new Date(displayAt),
       };
       setMessages((existing) => existing.some((message) => message.id === card.id) ? existing : [...existing, card]);
-      logger.logEvent({ eventType: 'ai_guidance', action: 'ai_guidance_displayed', target: { element: 'ai-guidance-card', section: 'response', text: `${pendingGuidance.directionGuidance}\n\nYour earlier ideas: ${pendingGuidance.previousIdeas.join(', ')}\n\n${pendingGuidance.response}` }, metadata: { messageId: pendingGuidance.messageId, displayDelayMs: 5000, directionGuidance: pendingGuidance.directionGuidance, previousIdeas: pendingGuidance.previousIdeas, responseLength: pendingGuidance.response.length } });
+      logger.logEvent({ eventType: 'ai_guidance', action: 'ai_guidance_displayed', target: { element: 'ai-guidance-card', section: 'response', text: `${pendingGuidance.displaySummary}\n\n${pendingGuidance.response}` }, metadata: { messageId: pendingGuidance.messageId, displayDelayMs: 5000, directionGuidance: pendingGuidance.directionGuidance, previousIdeas: pendingGuidance.previousIdeas, responseLength: pendingGuidance.response.length } });
       void logger.sendBatch();
       setPendingGuidance(null);
       setGuidanceCountdown(null);
@@ -513,8 +517,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
                       return updated;
                     });
 
-                    // Auto-scroll to bottom (skip if user has text selected)
-                    requestAnimationFrame(() => scrollToBlockStart(loadingMessageId));
+                    // The loading message already scrolls into view once when it is
+                    // created. Do not scroll on later chunks: that would override a
+                    // participant who has started reading elsewhere in the thread.
                   }
                 } catch (parseError) {
                   console.error('Error parsing SSE data:', parseError);
@@ -947,13 +952,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
                     borderRadius: '12px',
                     padding: '0.75rem 1rem'
                   }}>
-                    <div style={{ whiteSpace: 'pre-wrap', color: '#065f46', fontSize: '0.9375rem', lineHeight: '1.5' }}>
-                      {message.guidanceDirection}
-                    </div>
-                    <div style={{ marginTop: '0.9rem', fontSize: '0.78rem', color: '#38856b' }}>
-                      [Your earlier ideas: {(message.guidancePreviousIdeas ?? []).join(', ')}]
-                    </div>
-                    <div className="markdown prose" style={{ color: '#064e3b', fontSize: '0.9375rem', lineHeight: '1.5', marginTop: '0.9rem', overflowX: 'auto' }}>
+                    {message.guidanceDisplaySummary && (
+                      <div style={{ color: '#38856b', fontSize: '0.78rem', lineHeight: '1.45' }}>
+                        {message.guidanceDisplaySummary}
+                      </div>
+                    )}
+                    {message.guidanceDisplaySummary && (
+                      <div style={{ height: '1px', backgroundColor: '#a7f3d0', margin: '0.75rem 0' }} />
+                    )}
+                    <div className="markdown prose" style={{ color: '#064e3b', fontSize: '0.9375rem', lineHeight: '1.5', overflowX: 'auto' }}>
                       <MemoizedMarkdown content={message.content} />
                     </div>
                   </div>

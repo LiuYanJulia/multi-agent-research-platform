@@ -39,6 +39,12 @@ export interface AgentStageEvent {
     recentWritingContext: Array<{ type: 'added' | 'removed' | 'revised'; content: string }>;
   };
   guidanceResponseInput?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+  guidanceCard?: {
+    displaySummary: string;
+    directionGuidance: string;
+    previousIdeas: string[];
+    response: string;
+  };
   moves?: Array<{
     moveId: number;
     contentMoveNumber: number;
@@ -79,6 +85,7 @@ const DebugPanel: React.FC<DebugPanelProps> = ({ isTestUser, isPracticeSession, 
   const [expandedEvaluationStage, setExpandedEvaluationStage] = useState<number | null>(null);
   const [expandedGuidanceGenerationStage, setExpandedGuidanceGenerationStage] = useState<number | null>(null);
   const [expandedGuidanceResponseStage, setExpandedGuidanceResponseStage] = useState<number | null>(null);
+  const [expandedGuidanceCardStage, setExpandedGuidanceCardStage] = useState<number | null>(null);
   const latestMoveCounts = [...stages].reverse().find((stage) => stage.moveCounts)?.moveCounts;
   const latestStreak = [...stages].reverse().find((stage) => stage.streak)?.streak;
 
@@ -322,6 +329,34 @@ const DebugPanel: React.FC<DebugPanelProps> = ({ isTestUser, isPracticeSession, 
                           <pre style={{ margin: 0, padding: '0.375rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word', backgroundColor: '#111827', color: '#d1d5db', fontSize: '0.65rem' }}>{message.content}</pre>
                         </div>
                       ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {s.agent === 'main_response_agent' && s.status === 'completed' && s.guidanceCard && (
+                <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid #334155' }}>
+                  <button
+                    type="button"
+                    onClick={() => setExpandedGuidanceCardStage((current) => current === i ? null : i)}
+                    aria-expanded={expandedGuidanceCardStage === i}
+                    style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', padding: 0,
+                      border: 'none', background: 'transparent', color: '#a7f3d0', fontWeight: 600,
+                      fontSize: 'inherit', textAlign: 'left', cursor: 'pointer',
+                    }}
+                    title="Show the full guidance context retained for debugging"
+                  >
+                    <span>Full AI guidance card context</span>
+                    <span style={{ color: '#93c5fd', fontSize: '0.68rem' }}>
+                      {expandedGuidanceCardStage === i ? 'Hide context ▴' : 'View context ▾'}
+                    </span>
+                  </button>
+                  {expandedGuidanceCardStage === i && (
+                    <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      <div><div style={{ color: '#93c5fd', fontWeight: 700, marginBottom: '0.2rem' }}>Participant summary</div><pre style={{ margin: 0, padding: '0.375rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word', backgroundColor: '#111827', color: '#d1d5db', fontSize: '0.65rem' }}>{s.guidanceCard.displaySummary}</pre></div>
+                      <div><div style={{ color: '#93c5fd', fontWeight: 700, marginBottom: '0.2rem' }}>Direction</div><pre style={{ margin: 0, padding: '0.375rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word', backgroundColor: '#111827', color: '#d1d5db', fontSize: '0.65rem' }}>{s.guidanceCard.directionGuidance}</pre></div>
+                      <div><div style={{ color: '#93c5fd', fontWeight: 700, marginBottom: '0.2rem' }}>Previous ideas</div><pre style={{ margin: 0, padding: '0.375rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word', backgroundColor: '#111827', color: '#d1d5db', fontSize: '0.65rem' }}>{s.guidanceCard.previousIdeas.join(', ')}</pre></div>
+                      <div><div style={{ color: '#93c5fd', fontWeight: 700, marginBottom: '0.2rem' }}>AI guidance content</div><pre style={{ margin: 0, padding: '0.375rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word', backgroundColor: '#111827', color: '#d1d5db', fontSize: '0.65rem' }}>{s.guidanceCard.response}</pre></div>
                     </div>
                   )}
                 </div>

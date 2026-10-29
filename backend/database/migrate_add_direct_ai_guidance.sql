@@ -3,6 +3,7 @@ ALTER TABLE messages
   MODIFY COLUMN role ENUM('user', 'assistant', 'ai_guidance') NOT NULL,
   ADD COLUMN IF NOT EXISTS guidance_direction TEXT NULL,
   ADD COLUMN IF NOT EXISTS guidance_previous_ideas JSON NULL,
+  ADD COLUMN IF NOT EXISTS guidance_display_summary TEXT NULL,
   ADD COLUMN IF NOT EXISTS guidance_display_at TIMESTAMP NULL;
 
 ALTER TABLE interaction_logs
