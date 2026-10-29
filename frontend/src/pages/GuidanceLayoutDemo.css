@@ -23,6 +23,7 @@
 .guidance-demo-panel-layout .section-writing { grid-area: 3 / 1 / 4 / 2; }
 .section-guidance { min-height: 0; overflow: hidden; }
 .guidance-demo-guidance-scroll { flex: 1 1 0; min-height: 0; overflow-y: auto; }
+.guidance-demo-empty-state { display: flex; align-items: center; height: 100%; margin: 0; padding: 1rem; color: #6b7280; font-size: .875rem; line-height: 1.5; text-align: center; }
 .guidance-demo-audio-status { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; padding: .5rem; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: .5rem; }
 .guidance-demo-connected-dot { width: .5rem; height: .5rem; background: #3b82f6; border-radius: 50%; animation: pulse 2s infinite; }
 .guidance-demo-connected-dot.is-connected { width: 8px; height: 8px; background: #22c55e; animation: none; }

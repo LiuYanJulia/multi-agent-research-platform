@@ -44,17 +44,17 @@ function GuidanceCard({ guidance, isNew = false }: { guidance: Guidance; isNew?:
   );
 }
 
-function ChatDemo({ mode, latestGuidance }: { mode: 'inline' | 'panel'; latestGuidance: Guidance }) {
+function ChatDemo({ mode, latestGuidance }: { mode: 'inline' | 'panel'; latestGuidance?: Guidance }) {
   return (
     <div className="section-chat border border-gray-200 rounded-lg p-4 bg-token-bg-primary guidance-demo-chat">
       <div className="guidance-demo-chat-inner">
-        <div className="guidance-demo-notification" role="status">AI guidance will appear in 0s</div>
+        {latestGuidance && <div className="guidance-demo-notification" role="status">AI guidance will appear in 0s</div>}
         <h2 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '1rem' }} className="text-token-text-primary">LLM Chat Interface</h2>
         <div className="guidance-demo-messages" data-interaction-section="response">
           <div className="guidance-demo-assistant">You have several promising ideas. Which residents might still be hard to reach when the city issues a heat warning?</div>
           <div className="guidance-demo-user">I want neighbourhood partners to identify who needs help, but I am still working out how the support connects.</div>
-          {mode === 'inline' && <GuidanceCard guidance={latestGuidance} />}
-          {mode === 'panel' && <div className="guidance-demo-panel-message">New guidance has appeared in the panel above your writing section.</div>}
+          {mode === 'inline' && latestGuidance && <GuidanceCard guidance={latestGuidance} />}
+          {mode === 'panel' && latestGuidance && <div className="guidance-demo-panel-message">New guidance has appeared in the panel above your writing section.</div>}
           <div className="guidance-demo-assistant">You can keep building on your proposal when you are ready.</div>
         </div>
         <div className="guidance-demo-composer"><span>Send a message…</span><button type="button" aria-label="Send mock message">↑</button></div>
@@ -99,14 +99,14 @@ function WritingDemo() {
 
 export default function GuidanceLayoutDemo() {
   const [mode, setMode] = useState<'inline' | 'panel'>('panel');
-  const [visibleGuidance, setVisibleGuidance] = useState<Guidance[]>(guidanceSamples.slice(0, 2));
+  const [visibleGuidance, setVisibleGuidance] = useState<Guidance[]>([]);
   const [newGuidanceId, setNewGuidanceId] = useState<number | null>(null);
   const latestGuidance = useMemo(() => visibleGuidance[visibleGuidance.length - 1], [visibleGuidance]);
 
   const addGuidance = () => {
     const newest = visibleGuidance[visibleGuidance.length - 1];
-    const nextSample = guidanceSamples.find((item) => item.id > newest.id) || guidanceSamples[0];
-    const next = nextSample.id > newest.id ? nextSample : { ...nextSample, id: newest.id + 1 };
+    const nextSample = guidanceSamples.find((item) => !newest || item.id > newest.id) || guidanceSamples[0];
+    const next = !newest || nextSample.id > newest.id ? nextSample : { ...nextSample, id: newest.id + 1 };
     setVisibleGuidance((items) => [...items, next].slice(-3));
     setNewGuidanceId(next.id);
     window.setTimeout(() => setNewGuidanceId(null), 2800);
@@ -129,7 +129,11 @@ export default function GuidanceLayoutDemo() {
               <div className="guidance-demo-guidance-inner">
                 <h2 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '0.75rem' }} className="text-token-text-primary">AI Guidance</h2>
                 <div className="guidance-demo-guidance-scroll">
-                  {[...visibleGuidance].reverse().map((guidance) => <GuidanceCard key={guidance.id} guidance={guidance} isNew={guidance.id === newGuidanceId} />)}
+                  {visibleGuidance.length === 0 ? (
+                    <p className="guidance-demo-empty-state">Proactive AI guidance will be shown here. Please consider them into your own thinking.</p>
+                  ) : (
+                    [...visibleGuidance].reverse().map((guidance) => <GuidanceCard key={guidance.id} guidance={guidance} isNew={guidance.id === newGuidanceId} />)
+                  )}
                 </div>
               </div>
             </div>
