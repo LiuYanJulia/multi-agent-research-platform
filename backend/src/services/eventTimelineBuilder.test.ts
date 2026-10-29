@@ -35,3 +35,23 @@ test('maps guidance engagement to response evidence only in evaluator timeline i
   assert.ok(descriptions.some((description) => description.includes('copied 28 character(s) from AI response (Message ID: 7) and pasted it into writing section')));
   assert.ok(descriptions.every((description) => !description.includes('guidance section')));
 });
+
+test('emits an ai_guidance chat-history row as an AI response for offline parity processing', () => {
+  const events = buildTimelineEventsFromRows({
+    sessionStartEpochMs: 0,
+    interactionLogs: [],
+    speechSegments: [],
+    messages: [{
+      id: 7,
+      role: 'ai_guidance',
+      content: 'Offer pharmacy partners a heat-check-in role.',
+      guidance_display_summary: '[Synthesis] One connection idea.',
+      timestamp: '2026-10-30T00:00:00.000Z',
+    }],
+  });
+
+  assert.deepEqual(events.map((event) => ({ eventType: event.eventType, aiResponse: event.aiResponse })), [{
+    eventType: 'ai_response',
+    aiResponse: '[Synthesis] One connection idea.\n\nOffer pharmacy partners a heat-check-in role.',
+  }]);
+});

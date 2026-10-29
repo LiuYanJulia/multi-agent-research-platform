@@ -4,9 +4,9 @@
 
 USE research_platform;
 
--- Alter the interaction_logs table to add 'regenerate-menu' to the target_section ENUM
+-- Keep target_section aligned with the application schema, including AI guidance cards.
 ALTER TABLE interaction_logs
-MODIFY COLUMN target_section ENUM('prompting', 'transcript', 'response', 'writing', 'regenerate-menu');
+MODIFY COLUMN target_section ENUM('prompting', 'transcript', 'response', 'writing', 'regenerate-menu', 'guidance');
 
 -- Verify the change
 DESCRIBE interaction_logs;

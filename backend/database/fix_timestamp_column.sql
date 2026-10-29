@@ -15,10 +15,10 @@ DROP TABLE IF EXISTS interaction_logs;
 CREATE TABLE interaction_logs (
   id INT AUTO_INCREMENT PRIMARY KEY,
   session_id VARCHAR(36) NOT NULL,
-  event_type ENUM('mouse', 'keyboard', 'ui', 'api', 'session', 'selection') NOT NULL,
+  event_type ENUM('mouse', 'keyboard', 'ui', 'api', 'session', 'selection', 'ai_guidance') NOT NULL,
   action VARCHAR(100) NOT NULL,
   target_element VARCHAR(255),
-  target_section ENUM('prompting', 'transcript', 'response', 'writing'),
+  target_section ENUM('prompting', 'transcript', 'response', 'writing', 'regenerate-menu', 'guidance'),
   coordinates JSON,
   text_content TEXT,
   metadata JSON,
