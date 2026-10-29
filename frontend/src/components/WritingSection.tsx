@@ -433,27 +433,8 @@ const WritingSection: React.FC<WritingSectionProps> = ({
             )}
           </div>
 
-          {/* Submission Section */}
+          {/* Submission button */}
           <div>
-            <div style={{ fontSize: '0.875rem', marginBottom: '0.75rem' }} className="text-token-text-secondary">
-              <p style={{ marginBottom: '0.5rem' }}>Ready to submit your work?</p>
-              <ul style={{ fontSize: '0.75rem', marginLeft: '1rem', listStyle: 'disc' }}>
-                <li>Your transcript and conversation history will be included</li>
-                <li>This action cannot be undone</li>
-                <li>Make sure you've completed your thoughts</li>
-              </ul>
-              {!isPracticeMode && !hasMetMinimumTime && (
-                <p style={{ fontSize: '0.75rem', marginTop: '0.5rem', color: '#92400e' }}>
-                  Submission becomes available 10 minutes after the main task begins.
-                </p>
-              )}
-              {!isPracticeMode && hasMetMinimumTime && !writingMinimumTimeMet && (
-                <p style={{ fontSize: '0.75rem', marginTop: '0.5rem', color: '#92400e' }}>
-                  Submission becomes available after you have spent 4 minutes in the writing phase.
-                </p>
-              )}
-            </div>
-
             <button
               onClick={() => {
                 setShowSubmitConfirm(true);
