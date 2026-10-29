@@ -75,12 +75,13 @@ const MemoizedMarkdown = memo(({ content }: { content: string }) => {
 });
 MemoizedMarkdown.displayName = 'MemoizedMarkdown';
 
-function asDisplayedGuidance(message: Message): DisplayedGuidance {
+function asDisplayedGuidance(message: Message, messageIndex: number): DisplayedGuidance {
   return {
     id: message.id,
     content: message.content,
     displaySummary: message.guidanceDisplaySummary,
     timestamp: message.timestamp,
+    messageIndex,
   };
 }
 
@@ -124,6 +125,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const guidanceForPanelRef = useRef<DisplayedGuidance[]>([]);
+  const messageIndexByIdRef = useRef<Map<string, number>>(new Map());
   const analyzedTranscriptCountRef = useRef(0);
   const availableTranscriptCountRef = useRef(0);
   const lastAutomaticAnalysisTranscriptCountRef = useRef(0);
@@ -132,6 +134,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
   const analysisInFlightRef = useRef(false);
   const idleAnalysisTimerRef = useRef<number | null>(null);
   const continuousAnalysisTimerRef = useRef<number | null>(null);
+
+  const messageIndexFor = useCallback((messageId: string): number => {
+    const existing = messageIndexByIdRef.current.get(messageId);
+    if (existing !== undefined) return existing;
+    const messageIndex = messageIndexByIdRef.current.size + 1;
+    messageIndexByIdRef.current.set(messageId, messageIndex);
+    return messageIndex;
+  }, []);
 
   const scrollToBlockStart = (id: string) => {
     requestAnimationFrame(() => {
@@ -282,7 +292,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
       if (response.ok) {
         const data = await response.json();
         const loadedMessages: Message[] = data.messages.map((msg: any) => ({
-          id: msg.messageId || msg.id,
+          id: String(msg.messageId || msg.id),
           role: msg.role,
           content: msg.content,
           timestamp: new Date(msg.timestamp),
@@ -293,6 +303,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
           guidanceDisplaySummary: msg.guidanceDisplaySummary,
           guidanceDisplayAt: msg.guidanceDisplayAt ? new Date(msg.guidanceDisplayAt) : undefined,
         }));
+
+        loadedMessages.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+        messageIndexByIdRef.current = new Map(loadedMessages.map((message, index) => [message.id, index + 1]));
 
         const deferredGuidance = loadedMessages.find((message) => message.role === 'ai_guidance' && message.guidanceDisplayAt && message.guidanceDisplayAt.getTime() > Date.now());
         if (deferredGuidance?.guidanceDisplayAt) {
@@ -305,15 +318,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
         const deliveredGuidance = loadedMessages
           .filter((message) => message.role === 'ai_guidance' && (!message.guidanceDisplayAt || message.guidanceDisplayAt.getTime() <= Date.now()))
           .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
-          .map(asDisplayedGuidance)
+          .map((message) => asDisplayedGuidance(message, messageIndexFor(message.id)))
           .slice(-3);
         guidanceForPanelRef.current = deliveredGuidance;
         onGuidanceChange?.(deliveredGuidance);
 
         // Guidance cards render in the page-level panel; the chat keeps conversational turns only.
         const visibleMessages = loadedMessages.filter((message) => message.role !== 'ai_guidance');
-        visibleMessages.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-
         setMessages(visibleMessages);
         console.log(`Loaded ${loadedMessages.length} messages from chat history for session ${sessionId}`);
       }
@@ -351,27 +362,28 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
     updateCountdown();
     const interval = window.setInterval(updateCountdown, 250);
     const timer = window.setTimeout(() => {
-      logger.logEvent({ eventType: 'ai_guidance', action: 'ai_guidance_notification_completed', target: { element: 'ai-guidance-banner', section: 'prompting' }, metadata: { messageId: pendingGuidance.messageId } });
       const card: Message = {
-        id: `guidance-${pendingGuidance.messageId}`,
+        id: String(pendingGuidance.messageId),
         role: 'ai_guidance', content: pendingGuidance.response, timestamp: new Date(displayAt),
         guidanceDirection: pendingGuidance.directionGuidance,
         guidancePreviousIdeas: pendingGuidance.previousIdeas,
         guidanceDisplaySummary: pendingGuidance.displaySummary,
         guidanceDisplayAt: new Date(displayAt),
       };
+      const guidanceMessageIndex = messageIndexFor(card.id);
+      logger.logEvent({ eventType: 'ai_guidance', action: 'ai_guidance_notification_completed', target: { element: 'ai-guidance-banner', section: 'prompting' }, metadata: { messageId: guidanceMessageIndex } });
       const nextGuidance = guidanceForPanelRef.current.some((guidance) => guidance.id === card.id)
         ? guidanceForPanelRef.current
-        : [...guidanceForPanelRef.current, asDisplayedGuidance(card)].slice(-3);
+        : [...guidanceForPanelRef.current, asDisplayedGuidance(card, guidanceMessageIndex)].slice(-3);
       guidanceForPanelRef.current = nextGuidance;
       onGuidanceChange?.(nextGuidance, card.id);
-      logger.logEvent({ eventType: 'ai_guidance', action: 'ai_guidance_displayed', target: { element: 'ai-guidance-panel-card', section: 'guidance', text: `${pendingGuidance.displaySummary}\n\n${pendingGuidance.response}` }, metadata: { messageId: pendingGuidance.messageId, displayDelayMs: 5000, directionGuidance: pendingGuidance.directionGuidance, previousIdeas: pendingGuidance.previousIdeas, responseLength: pendingGuidance.response.length } });
+      logger.logEvent({ eventType: 'ai_guidance', action: 'ai_guidance_displayed', target: { element: 'ai-guidance-panel-card', section: 'guidance', text: `${pendingGuidance.displaySummary}\n\n${pendingGuidance.response}` }, metadata: { messageId: guidanceMessageIndex, displayDelayMs: 5000, directionGuidance: pendingGuidance.directionGuidance, previousIdeas: pendingGuidance.previousIdeas, responseLength: pendingGuidance.response.length } });
       void logger.sendBatch();
       setPendingGuidance(null);
       setGuidanceCountdown(null);
     }, Math.max(0, displayAt - Date.now()));
     return () => { window.clearInterval(interval); window.clearTimeout(timer); };
-  }, [logger, onGuidanceChange, pendingGuidance]);
+  }, [logger, messageIndexFor, onGuidanceChange, pendingGuidance]);
 
   const handleSend = async (contextMessageId?: string, customPrompt?: string, hideUserPrompt?: boolean, isGuidanceMessage = false) => {
     if (!promptingEnabled && !isGuidanceMessage) return;
@@ -386,7 +398,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
         const messageIdx = messages.findIndex(msg => msg.id === contextMessageId);
         if (messageIdx !== -1) {
           referencedMessage = messages[messageIdx];
-          referencedMessageIndex = messageIdx + 1; // Convert to 1-based sequential index
+          referencedMessageIndex = messageIndexFor(contextMessageId);
           // Merge prompt with referenced message content
           mergedPrompt = `${messageContent} based on this information: ${referencedMessage.content}`;
         }
@@ -423,6 +435,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
         isGuidance: isGuidanceMessage,
       };
 
+      messageIndexFor(userMessage.id);
+
       if (!hideUserPrompt) {
         setMessages(prev => [...prev, userMessage]);
         // Save user message to database
@@ -443,6 +457,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
         timestamp: new Date(),
         isLoading: true
       };
+      messageIndexFor(loadingMessage.id);
       setMessages(prev => [...prev, loadingMessage]);
 
       // Auto-scroll to bottom of messages container only (not the entire page)
@@ -627,10 +642,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
       }
       if (data.guidance) {
         const guidance = data.guidance as DirectGuidancePayload;
+        const guidanceMessageIndex = messageIndexFor(String(guidance.messageId));
         logger.logEvent({
           eventType: 'ai_guidance', action: 'ai_guidance_notification_shown',
           target: { element: 'ai-guidance-banner', section: 'prompting' },
-          metadata: { messageId: guidance.messageId, displayAt: guidance.displayAt, displayDelayMs: 5000 },
+          metadata: { messageId: guidanceMessageIndex, displayAt: guidance.displayAt, displayDelayMs: 5000 },
         });
         void logger.sendBatch();
         setPendingGuidance(guidance);
@@ -648,7 +664,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
     } finally {
       analysisInFlightRef.current = false;
     }
-  }, [logger, onAgentStage, sessionId]);
+  }, [logger, messageIndexFor, onAgentStage, sessionId]);
 
   useEffect(() => {
     if (transcriptChunks.length <= analyzedTranscriptCountRef.current) return;
@@ -1342,7 +1358,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
           ) : (
             messages
               .filter((message) => message.role !== 'ai_guidance')
-              .map((message, index) => renderMessageBubble(message, index + 1, index + 1, promptingEnabled))
+              .map((message, index) => renderMessageBubble(message, index + 1, messageIndexFor(message.id), promptingEnabled))
           )}
           {/* Scroll anchor */}
           <div ref={messagesEndRef} />

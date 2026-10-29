@@ -51,7 +51,7 @@ export type UIAction =
   | 'phase_transition_client_acknowledged'
   | 'navigation';
 
-export type Section = 'prompting' | 'transcript' | 'response' | 'writing' | 'regenerate-menu';
+export type Section = 'prompting' | 'transcript' | 'response' | 'writing' | 'regenerate-menu' | 'guidance';
 
 export interface LogEvent {
   eventType: EventType;
@@ -587,6 +587,7 @@ export const useInteractionLogger = (options: UseInteractionLoggerOptions) => {
         },
         metadata: {
           textLength: selectedText?.length || 0,
+          messageId: getMessageIdFromElement(target),
         },
       });
     };
@@ -609,6 +610,7 @@ export const useInteractionLogger = (options: UseInteractionLoggerOptions) => {
         },
         metadata: {
           textLength: pastedText?.length || 0,
+          messageId: getMessageIdFromElement(target),
         },
       });
     };
@@ -629,6 +631,7 @@ export const useInteractionLogger = (options: UseInteractionLoggerOptions) => {
         },
         metadata: {
           textLength: selectedText?.length || 0,
+          messageId: getMessageIdFromElement(target),
         },
       });
     };
@@ -913,7 +916,7 @@ function getSectionFromElement(element: HTMLElement | null): Section | undefined
   let current: HTMLElement | null = element;
   while (current) {
     const explicitSection = current.getAttribute('data-interaction-section');
-    if (explicitSection === 'prompting' || explicitSection === 'transcript' || explicitSection === 'response' || explicitSection === 'writing' || explicitSection === 'regenerate-menu') {
+    if (explicitSection === 'prompting' || explicitSection === 'transcript' || explicitSection === 'response' || explicitSection === 'writing' || explicitSection === 'regenerate-menu' || explicitSection === 'guidance') {
       return explicitSection;
     }
     // Safely get className as string (handles SVG elements)

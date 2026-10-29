@@ -13,6 +13,7 @@ const guidance = (id: string): DisplayedGuidance => ({
   content: `Guidance response ${id}`,
   displaySummary: `[Exploration] Guidance ${id}`,
   timestamp: new Date(`2026-10-29T00:00:0${id}.000Z`),
+  messageIndex: Number(id),
 });
 
 describe('GuidancePanel', () => {
@@ -32,5 +33,13 @@ describe('GuidancePanel', () => {
     expect(screen.getByText('Guidance response 3')).toBeInTheDocument();
     expect(screen.getByText('Guidance response 4')).toBeInTheDocument();
     expect(screen.getByTestId('guidance-card-4')).toHaveClass('guidance-panel-flash-five');
+  });
+
+  it('marks guidance with its raw section and sequential message ID for interaction logging', () => {
+    render(<GuidancePanel guidance={[guidance('7')]} />);
+
+    expect(screen.getByTestId('guidance-panel-container')).toHaveAttribute('data-interaction-section', 'guidance');
+    expect(screen.getByTestId('guidance-card-7')).toHaveAttribute('data-interaction-section', 'guidance');
+    expect(screen.getByTestId('guidance-card-7')).toHaveAttribute('data-message-index', '7');
   });
 });

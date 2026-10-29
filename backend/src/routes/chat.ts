@@ -636,7 +636,7 @@ router.get('/history', async (req, res) => {
     const [rows] = await db.execute(
       `SELECT id, role, content, model_slug, is_guidance, guidance_direction,
               guidance_previous_ideas, guidance_display_summary, guidance_display_at, timestamp
-       FROM messages WHERE session_id = ? ORDER BY timestamp ASC`,
+       FROM messages WHERE session_id = ? ORDER BY timestamp ASC, id ASC`,
       [sessionId]
     );
 

@@ -107,6 +107,11 @@ async function ensureGuidanceEnums() {
   if (!String((logRows as any[])[0]?.columnType ?? '').includes("'ai_guidance'")) {
     await db.execute("ALTER TABLE interaction_logs MODIFY COLUMN event_type ENUM('mouse', 'keyboard', 'ui', 'api', 'session', 'selection', 'ai_guidance') NOT NULL");
   }
+  const [sectionRows] = await db.execute(`SELECT COLUMN_TYPE AS columnType FROM information_schema.COLUMNS WHERE table_schema = DATABASE() AND table_name = 'interaction_logs' AND column_name = 'target_section'`);
+  if (!String((sectionRows as any[])[0]?.columnType ?? '').includes("'guidance'")) {
+    await db.execute("ALTER TABLE interaction_logs MODIFY COLUMN target_section ENUM('prompting', 'transcript', 'response', 'writing', 'regenerate-menu', 'guidance') NULL");
+    console.log('Added guidance to interaction_logs.target_section enum');
+  }
 }
 
 // Paper 2 (2026-09): some live databases were created long before `participant_id` was the
@@ -177,7 +182,7 @@ async function createTables() {
         event_type ENUM('mouse', 'keyboard', 'ui', 'api', 'session', 'selection', 'ai_guidance') NOT NULL,
         action VARCHAR(100) NOT NULL,
         target_element VARCHAR(255),
-        target_section ENUM('prompting', 'transcript', 'response', 'writing', 'regenerate-menu'),
+        target_section ENUM('prompting', 'transcript', 'response', 'writing', 'regenerate-menu', 'guidance'),
         coordinates JSON,
         text_content TEXT,
         metadata JSON,

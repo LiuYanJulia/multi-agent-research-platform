@@ -120,6 +120,15 @@ function parseObject(value: unknown): Record<string, unknown> {
   }
 }
 
+/**
+ * Guidance is preserved as its own raw interaction-log section for audit. The
+ * evaluator was trained before that panel existed, so its timeline receives
+ * the equivalent response-reading event instead.
+ */
+function normalizeGuidanceForEvaluator(log: InteractionLog): InteractionLog {
+  return log.target_section === 'guidance' ? { ...log, target_section: 'response' } : log;
+}
+
 function text(value: unknown): string {
   return typeof value === 'string' ? value : value == null ? '' : String(value);
 }
@@ -495,6 +504,7 @@ export function buildTimelineEventsFromRows(input: TimelineRowsInput): TimelineE
   const normalized = rawLogs
     .filter((log) => !(log.action === 'hover_start' && log.target_element === '#root'))
     .filter((log) => log.action !== 'selection_clear')
+    .map(normalizeGuidanceForEvaluator)
     .map((log) => {
       const metadata = parseObject(log.metadata);
       return { ...log, absoluteTimestamp: clock.sessionStartEpochMs + Number(log.timestamp), metadataObject: metadata, category: categoryFor(log, metadata) };

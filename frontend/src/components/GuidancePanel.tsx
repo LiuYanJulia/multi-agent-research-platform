@@ -6,6 +6,8 @@ export interface DisplayedGuidance {
   content: string;
   displaySummary?: string;
   timestamp: Date;
+  /** Stable sequence across user, assistant, and guidance messages for interaction logs. */
+  messageIndex: number;
 }
 
 interface GuidancePanelProps {
@@ -23,6 +25,7 @@ const GuidancePanel: React.FC<GuidancePanelProps> = ({ guidance, newlyDeliveredI
       <h2 style={{ fontSize: '1.125rem', fontWeight: 600, margin: '0 0 0.75rem' }} className="text-token-text-primary">AI Guidance</h2>
       <div
         data-testid="guidance-panel-container"
+        data-interaction-section="guidance"
         style={{
           flex: '1 1 0', minHeight: 0, overflowY: 'auto', padding: '0.75rem 1rem',
           backgroundColor: '#ffffff', border: '1px solid #e5e7eb', borderRadius: '0.5rem',
@@ -36,6 +39,8 @@ const GuidancePanel: React.FC<GuidancePanelProps> = ({ guidance, newlyDeliveredI
           <article
             key={item.id}
             data-testid={`guidance-card-${item.id}`}
+            data-interaction-section="guidance"
+            data-message-index={item.messageIndex}
             className={item.id === newlyDeliveredId ? 'guidance-panel-flash-five' : undefined}
             style={{
               marginBottom: '0.75rem', padding: '0.75rem 1rem', backgroundColor: '#ecfdf5',

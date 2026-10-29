@@ -9,6 +9,7 @@ const router = express.Router();
 
 // Valid event types for the database ENUM
 const VALID_EVENT_TYPES = ['mouse', 'keyboard', 'ui', 'api', 'session', 'selection', 'ai_guidance'];
+const VALID_TARGET_SECTIONS = ['prompting', 'transcript', 'response', 'writing', 'regenerate-menu', 'guidance'];
 
 // Helper function to normalize and validate event type
 function normalizeEventType(eventType: string | undefined): string {
@@ -19,6 +20,13 @@ function normalizeEventType(eventType: string | undefined): string {
 
   // Return if valid, otherwise default to 'ui'
   return VALID_EVENT_TYPES.includes(normalized) ? normalized : 'ui';
+}
+
+/** Preserve known UI regions while preventing one malformed event from rejecting a whole batch. */
+export function normalizeTargetSection(section: unknown): string | null {
+  if (typeof section !== 'string') return null;
+  const normalized = section.trim();
+  return VALID_TARGET_SECTIONS.includes(normalized) ? normalized : null;
 }
 
 // POST /api/logging/batch - Log multiple interactions at once
@@ -76,7 +84,7 @@ router.post('/batch', async (req, res) => {
         normalizeEventType(log.eventType),
         log.action || 'unknown',
         log.target?.element || null,
-        log.target?.section || null,
+        normalizeTargetSection(log.target?.section),
         log.target?.coordinates ? JSON.stringify(log.target.coordinates) : null,
         log.target?.text || null,
         log.metadata ? JSON.stringify(log.metadata) : null,
@@ -181,7 +189,7 @@ router.post('/single', async (req, res) => {
         normalizeEventType(eventType),
         action,
         target?.element || null,
-        target?.section || null,
+        normalizeTargetSection(target?.section),
         target?.coordinates ? JSON.stringify(target.coordinates) : null,
         target?.text || null,
         metadata ? JSON.stringify(metadata) : null,

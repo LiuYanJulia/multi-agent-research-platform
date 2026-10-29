@@ -98,6 +98,7 @@ describe('ChatInterface streaming', () => {
     await waitFor(() => expect(onGuidanceChange).toHaveBeenLastCalledWith([
       expect.objectContaining({
         id: 'guidance-1',
+        messageIndex: 1,
         displaySummary: '[Exploration] Based on your 2 earlier ideas, AI provides 2 ideas for you to consider.',
         content: 'Start with one concise direction, then develop the key details.',
       }),
