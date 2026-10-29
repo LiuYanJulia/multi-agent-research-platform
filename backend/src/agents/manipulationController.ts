@@ -376,8 +376,8 @@ export function guidanceDisplaySummary(spec: Pick<GuidanceSpec, 'targetOrientati
 }
 
 export function guidanceResponseWordLimit(targetOrientation: Orientation, magnitude: TmLevel): number {
-  if (targetOrientation === 'D') return magnitude === 'high' ? 120 : 40;
-  return magnitude === 'high' ? 70 : 40;
+  if (targetOrientation === 'D') return magnitude === 'high' ? 120 : 50;
+  return magnitude === 'high' ? 80 : 50;
 }
 
 function makePromptForResponse(spec: Pick<GuidanceSpec, 'targetOrientation' | 'magnitude' | 'recentWritingContext'>, directionGuidance: string, previousIdeas: string[]): string {

@@ -10,9 +10,9 @@ import { GUIDANCE_NOTIFICATION_COOLDOWN_SECONDS } from '../services/guidanceDeli
 
 test('maps every orientation and magnitude to its approved guidance response word limit', () => {
   assert.equal(guidanceResponseWordLimit('D', 'high'), 120);
-  assert.equal(guidanceResponseWordLimit('D', 'low'), 40);
-  assert.equal(guidanceResponseWordLimit('C', 'high'), 70);
-  assert.equal(guidanceResponseWordLimit('C', 'low'), 40);
+  assert.equal(guidanceResponseWordLimit('D', 'low'), 50);
+  assert.equal(guidanceResponseWordLimit('C', 'high'), 80);
+  assert.equal(guidanceResponseWordLimit('C', 'low'), 50);
 });
 
 test('labels divergent and convergent guidance summaries before their muted copy', () => {
