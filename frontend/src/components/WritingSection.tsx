@@ -271,14 +271,10 @@ const WritingSection: React.FC<WritingSectionProps> = ({
     if (editorRef.current) setContent(editableHtmlToMarkdown(editorRef.current.innerHTML));
   };
 
-  const runEditorCommand = (command: 'bold' | 'insertUnorderedList' | 'insertOrderedList' | 'insertHTML') => {
+  const runEditorCommand = () => {
     if (locked || !editorRef.current) return;
     editorRef.current.focus();
-    if (command === 'insertHTML') {
-      document.execCommand('insertHTML', false, '<table><thead><tr><th>Header</th><th>Header</th></tr></thead><tbody><tr><td>Content</td><td>Content</td></tr></tbody></table><p><br></p>');
-    } else {
-      document.execCommand(command);
-    }
+    document.execCommand('bold');
     syncRichEditor();
   };
 
@@ -373,20 +369,6 @@ const WritingSection: React.FC<WritingSectionProps> = ({
               )}
             </div>
           )}
-          <div style={{ display: 'flex', gap: '0.375rem', marginBottom: '0.5rem' }} aria-label="Writing formatting controls">
-            {([
-              ['Bold', 'bold', 'B'],
-              ['Bulleted list', 'insertUnorderedList', '• List'],
-              ['Numbered list', 'insertOrderedList', '1. List'],
-              ['Insert table', 'insertHTML', 'Table'],
-            ] as const).map(([label, command, copy]) => (
-              <button key={command} type="button" aria-label={label} disabled={locked}
-                onMouseDown={(event) => { event.preventDefault(); runEditorCommand(command); }}
-                style={{ padding: '0.25rem 0.5rem', border: '1px solid #d1d5db', borderRadius: '0.25rem', background: '#fff', color: '#374151', fontSize: '0.75rem', cursor: locked ? 'not-allowed' : 'pointer', opacity: locked ? 0.5 : 1 }}>
-                {copy}
-              </button>
-            ))}
-          </div>
           <div
             ref={editorRef}
             data-testid="writing-rich-editor"
@@ -408,7 +390,7 @@ const WritingSection: React.FC<WritingSectionProps> = ({
             onKeyDown={(event) => {
               if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'b') {
                 event.preventDefault();
-                runEditorCommand('bold');
+                runEditorCommand();
               }
             }}
             style={{
@@ -428,7 +410,7 @@ const WritingSection: React.FC<WritingSectionProps> = ({
             }}
           />
           {!content && !locked && (
-            <span style={{ position: 'absolute', top: '3.55rem', left: '1rem', color: '#9ca3af', fontSize: '0.875rem', pointerEvents: 'none' }}>
+            <span style={{ position: 'absolute', top: '1rem', left: '1rem', color: '#9ca3af', fontSize: '0.875rem', pointerEvents: 'none' }}>
               Combine your insights here. Write your final thoughts, conclusions, or answers...
             </span>
           )}

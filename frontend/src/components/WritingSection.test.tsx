@@ -9,12 +9,13 @@ describe('WritingSection rich Markdown editor', () => {
     Object.defineProperty(document, 'execCommand', { configurable: true, value: jest.fn() });
   });
 
-  it('uses an always-visible rich text editor with a bold control', () => {
+  it('uses an always-visible rich text editor without a formatting toolbar', () => {
     render(<WritingSection logger={logger} isPracticeMode />);
 
     expect(screen.getByTestId('writing-rich-editor')).toHaveAttribute('contenteditable', 'true');
-    fireEvent.mouseDown(screen.getByRole('button', { name: 'Bold' }));
-    expect(document.execCommand).toHaveBeenCalledWith('bold');
+    expect(screen.queryByRole('button', { name: 'Bold' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Bulleted list' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Insert table' })).not.toBeInTheDocument();
   });
 
   it('clears the rich editor and its Markdown state together', () => {
