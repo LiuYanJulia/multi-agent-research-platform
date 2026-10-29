@@ -3,7 +3,7 @@ import mysql from 'mysql2/promise';
 import { evaluateTimelinePartition, EvaluationResult, hasSubstantiveParticipantContent } from '../agents/moveTypeEvaluator';
 import { decideCurrentOrientation, DecisionContextMove, DecisionResult } from '../agents/decisionAgent';
 import { buildSessionTimeline, TimelineEvent, unevaluatedTail } from './eventTimelineBuilder';
-import { runManipulationController, getManipulationState, EvaluatedMove, ControllerInstruction, guidanceGenerationDebugInput, MOVE_TYPE_NAMES } from '../agents/manipulationController';
+import { runManipulationController, getManipulationState, EvaluatedMove, ControllerInstruction, MOVE_TYPE_NAMES, GuidancePlannerOutput } from '../agents/manipulationController';
 
 type SqlExecutor = Pick<mysql.Pool, 'execute'>;
 
@@ -41,13 +41,8 @@ export interface AgentStageEvent {
   // Test-mode diagnostic output from the model/parser, including a fallback
   // reason when no model response was available.
   evaluationRaw?: unknown;
-  /** Exact prompt payload supplied to the guidance-generation LLM for an intervention. */
-  guidanceGenerationInput?: {
-    systemPrompt: string;
-    runtimeInput: string;
-    selectedMoveDescriptions: Array<{ moveId: number; moveType: number; orientation: 'D' | 'C'; description: string }>;
-    recentWritingContext: Array<{ type: 'added' | 'removed' | 'revised'; content: string }>;
-  };
+  /** Internal planner output for a delivered guidance card. */
+  guidancePlannerOutput?: GuidancePlannerOutput;
   /** Exact messages supplied to generate the visible AI-response portion of a guidance card. */
   guidanceResponseInput?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
   /** Full three-part guidance card, retained for test-mode auditing only. */
@@ -174,6 +169,19 @@ async function logEvaluationAudit(db: SqlExecutor, p: EvaluationAuditParams): Pr
       before?.streak_orientation ?? null, before?.streak_count ?? null, before?.streak_suppression_remaining ?? null,
       after?.streak_orientation ?? null, after?.streak_count ?? null, after?.streak_suppression_remaining ?? null,
     ]
+  );
+}
+
+/** Attach the asynchronous delivery/planner trace to the evaluator audit row. */
+export async function updateGuidanceGenerationAudit(
+  db: SqlExecutor,
+  sessionId: string,
+  turnIndex: number,
+  guidanceGeneration: unknown,
+): Promise<void> {
+  await db.execute(
+    'UPDATE evaluation_agent_audit SET guidance_generation_payload = ? WHERE session_id = ? AND turn_index = ?',
+    [safeStringify(guidanceGeneration), sessionId, turnIndex],
   );
 }
 
@@ -458,9 +466,6 @@ async function runTurnPipelineOnce(
       count: updatedState?.streak_count ?? 0,
       suppressionRemaining: Number(updatedState?.streak_suppression_remaining ?? 0),
     },
-    guidanceGenerationInput: instruction.guidanceSpec
-      ? guidanceGenerationDebugInput(instruction.guidanceSpec)
-      : undefined,
     modelUsed: instruction.debug.guidanceModelUsed,
     timestamp: Date.now(),
   });

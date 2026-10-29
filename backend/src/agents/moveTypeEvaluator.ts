@@ -206,6 +206,11 @@ function isSubstantiveText(value: string): boolean {
   const normalized = value.replace(/\s+/g, ' ').trim().toLowerCase();
   if (!normalized || NON_SUBSTANTIVE_UTTERANCES.has(normalized) || UNCERTAIN_OR_FILLER_ONLY.test(normalized)) return false;
 
+  // Do not turn an experiment prompt pasted into chat, a navigation/status label,
+  // or a broken transcription fragment into an intervention-triggering idea.
+  if (/community heat-resilience support system|older adults living alone|outdoor workers|households without reliable cooling|limited public resources/.test(normalized)) return false;
+  if (/^(?:audio recording active|connected|ready to submit your work|proactive ai guidance will be shown here|writing section|submit button)$/i.test(normalized)) return false;
+
   const words = normalized.match(/[\p{L}\p{N}]+/gu) ?? [];
   const distinctWords = new Set(words);
   // A repeated greeting such as "hi, hi" has words but conveys no session content.
@@ -225,7 +230,11 @@ export function hasSubstantiveParticipantContent(partition: TimelineEvent[]): bo
   return partition.some((event) => {
     const directText = [event.speech, event.userMessage];
     const typedText = quotedParticipantText(event.actionDescription);
-    return isResponseReadingAction(event.actionDescription) || [...directText, ...typedText].some(isSubstantiveText);
+    const substantiveSpeech = event.speech && isSubstantiveText(event.speech)
+      && (event.speech.match(/[\p{L}\p{N}]+/gu) ?? []).length >= 3;
+    return isResponseReadingAction(event.actionDescription)
+      || Boolean(substantiveSpeech)
+      || [event.userMessage, ...typedText].some(isSubstantiveText);
   });
 }
 

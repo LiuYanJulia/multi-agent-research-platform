@@ -32,11 +32,10 @@ export interface AgentStageEvent {
     eventIdEnd?: number;
   }>;
   evaluationRaw?: unknown;
-  guidanceGenerationInput?: {
-    systemPrompt: string;
-    runtimeInput: string;
-    selectedMoveDescriptions: Array<{ moveId: number; moveType: number; orientation: 'D' | 'C'; description: string }>;
-    recentWritingContext: Array<{ type: 'added' | 'removed' | 'revised'; content: string }>;
+  guidancePlannerOutput?: {
+    directionGuidance: string;
+    previousIdeas: string[];
+    writingContextSummary: string;
   };
   guidanceResponseInput?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
   guidanceCard?: {
@@ -83,7 +82,7 @@ const PANEL_WIDTH = 340;
 const DebugPanel: React.FC<DebugPanelProps> = ({ isTestUser, isPracticeSession, transcript, partialTranscript, stages }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [expandedEvaluationStage, setExpandedEvaluationStage] = useState<number | null>(null);
-  const [expandedGuidanceGenerationStage, setExpandedGuidanceGenerationStage] = useState<number | null>(null);
+  const [expandedGuidancePlannerStage, setExpandedGuidancePlannerStage] = useState<number | null>(null);
   const [expandedGuidanceResponseStage, setExpandedGuidanceResponseStage] = useState<number | null>(null);
   const [expandedGuidanceCardStage, setExpandedGuidanceCardStage] = useState<number | null>(null);
   const latestMoveCounts = [...stages].reverse().find((stage) => stage.moveCounts)?.moveCounts;
@@ -271,35 +270,21 @@ const DebugPanel: React.FC<DebugPanelProps> = ({ isTestUser, isPracticeSession, 
                     : `${s.agent === 'evaluation_agent' ? 'Evaluator' : 'Guidance-generation'} LLM running with "${s.modelUsed}"`}
                 </div>
               )}
-              {s.agent === 'manipulation_controller' && s.status === 'completed' && s.guidanceGenerationInput && (
+              {s.agent === 'main_response_agent' && s.status === 'completed' && s.guidancePlannerOutput && (
                 <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid #334155' }}>
                   <button
                     type="button"
-                    onClick={() => setExpandedGuidanceGenerationStage((current) => current === i ? null : i)}
-                    aria-expanded={expandedGuidanceGenerationStage === i}
-                    style={{
-                      display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', padding: 0,
-                      border: 'none', background: 'transparent', color: '#a7f3d0', fontWeight: 600,
-                      fontSize: 'inherit', textAlign: 'left', cursor: 'pointer',
-                    }}
-                    title="Show the exact input sent to the guidance-generation LLM"
+                    onClick={() => setExpandedGuidancePlannerStage((current) => current === i ? null : i)}
+                    aria-expanded={expandedGuidancePlannerStage === i}
+                    style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', padding: 0, border: 'none', background: 'transparent', color: '#a7f3d0', fontWeight: 600, fontSize: 'inherit', textAlign: 'left', cursor: 'pointer' }}
                   >
-                    <span>Guidance-generation LLM input</span>
-                    <span style={{ color: '#93c5fd', fontSize: '0.68rem' }}>
-                      {expandedGuidanceGenerationStage === i ? 'Hide input ▴' : 'View input ▾'}
-                    </span>
+                    <span>Guidance planner output</span>
+                    <span style={{ color: '#93c5fd', fontSize: '0.68rem' }}>{expandedGuidancePlannerStage === i ? 'Hide output ▴' : 'View output ▾'}</span>
                   </button>
-                  {expandedGuidanceGenerationStage === i && (
-                    <div style={{ marginTop: '0.5rem' }}>
-                      <div style={{ color: '#93c5fd', fontWeight: 700, marginBottom: '0.25rem' }}>System prompt</div>
-                      <pre style={{ margin: 0, padding: '0.375rem', maxHeight: '10rem', overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', backgroundColor: '#111827', color: '#d1d5db', fontSize: '0.65rem' }}>
-                        {s.guidanceGenerationInput.systemPrompt}
-                      </pre>
-                      <div style={{ color: '#93c5fd', fontWeight: 700, margin: '0.5rem 0 0.25rem' }}>Runtime context</div>
-                      <pre style={{ margin: 0, padding: '0.375rem', maxHeight: '14rem', overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', backgroundColor: '#111827', color: '#d1d5db', fontSize: '0.65rem' }}>
-                        {s.guidanceGenerationInput.runtimeInput}
-                      </pre>
-                    </div>
+                  {expandedGuidancePlannerStage === i && (
+                    <pre style={{ margin: '0.5rem 0 0', padding: '0.375rem', maxHeight: '14rem', overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', backgroundColor: '#111827', color: '#d1d5db', fontSize: '0.65rem' }}>
+                      {JSON.stringify(s.guidancePlannerOutput, null, 2)}
+                    </pre>
                   )}
                 </div>
               )}

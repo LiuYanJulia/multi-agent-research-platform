@@ -333,6 +333,7 @@ async function createTables() {
         move_ledger_count_before INT NOT NULL DEFAULT 0,
         move_ledger_count_after INT NOT NULL DEFAULT 0,
         move_ledger_delta MEDIUMTEXT,
+        guidance_generation_payload MEDIUMTEXT,
         streak_orientation_before ENUM('D', 'C') NULL,
         streak_count_before INT,
         streak_suppression_remaining_before INT,
@@ -423,6 +424,7 @@ async function createTables() {
     await ensureColumn('manipulation_state', 'last_evaluated_event_id', "INT NOT NULL DEFAULT 0");
     await ensureColumn('manipulation_state', 'streak_suppression_remaining', "INT NOT NULL DEFAULT 0");
     await ensureColumn('manipulation_state', 'last_guidance_notification_at', "TIMESTAMP NULL");
+    await ensureColumn('evaluation_agent_audit', 'guidance_generation_payload', "MEDIUMTEXT NULL");
     await ensureDecisionAgentEnum();
     await ensureGuidanceEnums();
 

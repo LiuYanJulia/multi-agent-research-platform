@@ -2,11 +2,42 @@ import express from 'express';
 import OpenAI from 'openai';
 import { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { isPracticeSession } from '../utils/sessionUtils';
-import { AgentStageEvent, runIncrementalPipeline, logMainResponseTurn } from '../services/manipulationPipeline';
-import { guidanceDisplaySummary } from '../agents/manipulationController';
-import { GUIDANCE_NOTIFICATION_COOLDOWN_SECONDS } from '../services/guidanceDelivery';
+import { AgentStageEvent, runIncrementalPipeline, logMainResponseTurn, updateGuidanceGenerationAudit } from '../services/manipulationPipeline';
+import { generateGuidancePlanner, guidanceDisplaySummary, guidanceResponseWordLimit, GuidancePlannerOutput } from '../agents/manipulationController';
 
 const router = express.Router();
+
+/** Begin the two-stage generation slightly before the legacy two-minute reservation elapsed. */
+export const GUIDANCE_GENERATION_MIN_ELAPSED_SECONDS = 100;
+
+type StoredMessage = { role: 'user' | 'assistant' | 'ai_guidance'; content: string };
+
+/**
+ * Historic guidance must not masquerade as an ordinary assistant response. It is
+ * passed once, in a separately labelled memory block, only to direct guidance.
+ */
+export function buildGuidanceConversationContext(rows: StoredMessage[]): {
+  conversation: Array<{ role: 'user' | 'assistant'; content: string }>;
+  guidanceMemory: string[];
+} {
+  return {
+    conversation: rows
+      .filter((row) => row.role !== 'ai_guidance')
+      .map((row) => ({ role: row.role === 'user' ? 'user' as const : 'assistant' as const, content: String(row.content ?? '') })),
+    guidanceMemory: rows
+      .filter((row) => row.role === 'ai_guidance')
+      .map((row) => String(row.content ?? ''))
+      .filter(Boolean)
+      .slice(-3),
+  };
+}
+
+export function guidanceGenerationEligible(elapsedMilliseconds: number): boolean {
+  return elapsedMilliseconds > GUIDANCE_GENERATION_MIN_ELAPSED_SECONDS * 1_000;
+}
+
+const GUIDANCE_RESERVATION_SECONDS = GUIDANCE_GENERATION_MIN_ELAPSED_SECONDS + 5;
+const DIRECT_GUIDANCE_MEMORY_SYSTEM_PROMPT = `You are generating a proactive AI-guidance card, not replying normally to the participant. The private planner direction, prior ideas, writing summary, and delivered-guidance memory below are context only. Do not repeat a recommendation already delivered in guidance or an idea already developed in the participant's writing. Follow the requested intervention while remaining grounded in the participant's design. Output only the guidance content.`;
 
 export const MAIN_RESPONSE_SYSTEM_PROMPT = `The user is designing a community heat-resilience support system for a city facing more frequent and severe heatwaves.
 
@@ -24,20 +55,27 @@ function mainResponseSystemMessages(sessionId: string): ChatCompletionMessagePar
 }
 
 async function createDirectGuidancePayload(db: any, sessionId: string, result: any) {
-  const guidance = result.instruction?.guidance;
   const guidanceSpec = result.instruction?.guidanceSpec;
-  if (!guidance || !guidanceSpec) return null;
+  if (!guidanceSpec) return null;
   const displaySummary = guidanceDisplaySummary(guidanceSpec);
   const modelName = process.env.OPENAI_MODEL || 'gpt-5.6-terra';
   const [rows] = await db.execute('SELECT role, content FROM messages WHERE session_id = ? ORDER BY timestamp ASC', [sessionId]);
-  const context: ChatCompletionMessageParam[] = (rows as any[]).map((row): ChatCompletionMessageParam => ({
-    role: row.role === 'user' ? 'user' : 'assistant',
-    content: String(row.content ?? ''),
-  }));
+  const { conversation, guidanceMemory } = buildGuidanceConversationContext(rows as StoredMessage[]);
+  const [writingRows] = await db.execute(
+    'SELECT content FROM writing_drafts WHERE session_id = ? ORDER BY last_saved_at DESC LIMIT 1',
+    [sessionId],
+  );
+  const currentWriting = String((writingRows as any[])[0]?.content ?? '');
+  const plannerResult = await generateGuidancePlanner(guidanceSpec, currentWriting, guidanceMemory);
+  const planner = plannerResult.planner;
+  const wordLimit = guidanceResponseWordLimit(guidanceSpec.targetOrientation, guidanceSpec.magnitude);
+  const finalInstruction = `Private guidance direction:\n${planner.directionGuidance}\n\nParticipant idea context:\n${planner.previousIdeas.map((idea, index) => `${index + 1}. ${idea}`).join('\n')}\n\nWriting memory (do not repeat):\n${planner.writingContextSummary}\n\nDelivered guidance memory (do not repeat):\n${guidanceMemory.length ? guidanceMemory.map((item, index) => `${index + 1}. ${item}`).join('\n') : 'None.'}\n\nStay within ${wordLimit} English words. Start with one sentence summarising the proposed direction. On a new line, use concise Markdown points to elaborate. For divergent guidance, use a numbered list that preserves the requested number of ideas. Do not add a preamble, repeat this instruction, or end with a question.`;
+  const context: ChatCompletionMessageParam[] = conversation.map((row): ChatCompletionMessageParam => ({ role: row.role, content: row.content }));
   const responseMessages: ChatCompletionMessageParam[] = [
     ...mainResponseSystemMessages(sessionId),
+    { role: 'system', content: DIRECT_GUIDANCE_MEMORY_SYSTEM_PROMPT },
     ...context,
-    { role: 'user', content: guidance.promptForResponse },
+    { role: 'user', content: finalInstruction },
   ];
   const guidanceResponseInput = responseMessages.map((message) => ({
     role: message.role === 'system' || message.role === 'user' ? message.role : 'assistant' as const,
@@ -57,17 +95,45 @@ async function createDirectGuidancePayload(db: any, sessionId: string, result: a
   const [insert] = await db.execute(
     `INSERT INTO messages (session_id, role, content, model_slug, is_guidance, guidance_direction, guidance_previous_ideas, guidance_display_summary, guidance_display_at)
      VALUES (?, 'ai_guidance', ?, ?, FALSE, ?, ?, ?, ?)`,
-    [sessionId, response, modelName, guidance.directionGuidance, JSON.stringify(guidance.previousIdeas), displaySummary, displayAt]
+    [sessionId, response, modelName, planner.directionGuidance, JSON.stringify(planner.previousIdeas), displaySummary, displayAt]
   );
   if (result.turnIndex !== undefined) {
     await logMainResponseTurn(db, sessionId, result.turnIndex, {
-      input: { directGuidance: guidance, messages: guidanceResponseInput }, output: response, modelUsed: modelName,
+      input: { planner: plannerResult, currentWriting, guidanceMemory, messages: guidanceResponseInput }, output: response, modelUsed: modelName,
       startedAt, completedAt: new Date(), status: 'success',
     });
   }
   return {
-    messageId: Number((insert as any).insertId), directionGuidance: guidance.directionGuidance,
-    previousIdeas: guidance.previousIdeas, displaySummary, response, displayAt: displayAt.toISOString(), guidanceResponseInput,
+    messageId: Number((insert as any).insertId), directionGuidance: planner.directionGuidance,
+    previousIdeas: planner.previousIdeas, displaySummary, response, displayAt: displayAt.toISOString(), guidanceResponseInput,
+    planner, plannerResult, currentWriting, guidanceMemory,
+  };
+}
+
+async function reserveGuidanceGeneration(db: any, sessionId: string): Promise<{ eligible: boolean; input: Record<string, unknown>; output: Record<string, unknown> }> {
+  const [stateRows] = await db.execute(
+    'SELECT last_guidance_notification_at FROM manipulation_state WHERE session_id = ?',
+    [sessionId],
+  );
+  const previousDisplayReservation = (stateRows as any[])[0]?.last_guidance_notification_at ?? null;
+  const [reservation] = await db.execute(
+    `UPDATE manipulation_state
+     SET last_guidance_notification_at = CURRENT_TIMESTAMP
+     WHERE session_id = ?
+       AND (last_guidance_notification_at IS NULL
+            OR last_guidance_notification_at < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL ${GUIDANCE_RESERVATION_SECONDS} SECOND))`,
+    [sessionId],
+  );
+  const eligible = Number((reservation as any).affectedRows ?? 0) > 0;
+  return {
+    eligible,
+    input: {
+      previousDisplayReservation,
+      minimumElapsedSecondsAfterVisibleGuidance: GUIDANCE_GENERATION_MIN_ELAPSED_SECONDS,
+      reservationElapsedSeconds: GUIDANCE_RESERVATION_SECONDS,
+      checkedAt: new Date().toISOString(),
+    },
+    output: { eligible, reason: eligible ? 'cooldown_elapsed' : 'cooldown_not_elapsed' },
   };
 }
 
@@ -81,21 +147,39 @@ router.post('/analyze', async (req, res) => {
   const stages: AgentStageEvent[] = [];
   try {
     const result = await runIncrementalPipeline(db, sessionId, (stage) => stages.push(stage), typeof trigger === 'string' ? trigger : undefined);
-    let guidance = result.instruction?.intervened ? await createDirectGuidancePayload(db, sessionId, result) : null;
-    if (guidance) {
-      // Reserve the notification slot at delivery time. The evaluator and guidance
-      // generation still run; only the participant-facing notification is throttled.
-      const [reservation] = await db.execute(
-        `UPDATE manipulation_state
-         SET last_guidance_notification_at = CURRENT_TIMESTAMP
-         WHERE session_id = ?
-           AND (last_guidance_notification_at IS NULL
-                OR last_guidance_notification_at <= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL ${GUIDANCE_NOTIFICATION_COOLDOWN_SECONDS} SECOND))`,
-        [sessionId]
-      );
-      if (Number((reservation as any).affectedRows ?? 0) === 0) {
-        await db.execute('DELETE FROM messages WHERE id = ? AND session_id = ?', [guidance.messageId, sessionId]);
-        guidance = null;
+    let guidance: any = null;
+    if (result.instruction?.intervened && result.turnIndex !== undefined) {
+      const deliveryGate = await reserveGuidanceGeneration(db, sessionId);
+      if (!deliveryGate.eligible) {
+        await updateGuidanceGenerationAudit(db, sessionId, result.turnIndex, { deliveryGate });
+      } else {
+        try {
+          guidance = await createDirectGuidancePayload(db, sessionId, result);
+          await updateGuidanceGenerationAudit(db, sessionId, result.turnIndex, {
+            deliveryGate,
+            planner: {
+              input: { ...guidance.plannerResult.input, currentWriting: guidance.currentWriting, recentDisplayedGuidance: guidance.guidanceMemory },
+              output: guidance.planner,
+              modelUsed: guidance.plannerResult.modelUsed,
+              usedFallback: guidance.plannerResult.usedFallback,
+            },
+            mainResponse: {
+              input: guidance.guidanceResponseInput,
+              output: guidance.response,
+              modelUsed: process.env.OPENAI_MODEL || 'gpt-5.6-terra',
+            },
+            delivery: {
+              input: { displaySummary: guidance.displaySummary },
+              output: { messageId: guidance.messageId, displayAt: guidance.displayAt },
+            },
+          });
+        } catch (error) {
+          await updateGuidanceGenerationAudit(db, sessionId, result.turnIndex, {
+            deliveryGate,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
+        }
       }
     }
     if (guidance) {
@@ -103,6 +187,7 @@ router.post('/analyze', async (req, res) => {
         agent: 'main_response_agent', status: 'completed',
         detail: 'Generated the AI-response portion of the guidance card.',
         modelUsed: process.env.OPENAI_MODEL || 'gpt-5.6-terra',
+        guidancePlannerOutput: guidance.planner as GuidancePlannerOutput,
         guidanceResponseInput: guidance.guidanceResponseInput,
         guidanceCard: {
           displaySummary: guidance.displaySummary,

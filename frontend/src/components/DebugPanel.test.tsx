@@ -25,4 +25,20 @@ describe('DebugPanel guidance auditing', () => {
     expect(screen.getByText('peer mentoring, skill tracker')).toBeInTheDocument();
     expect(screen.getByText(/First, refine the mentoring loop/)).toBeInTheDocument();
   });
+
+  it('shows the private planner output behind its own expander', () => {
+    const stages: AgentStageEvent[] = [{
+      agent: 'main_response_agent', status: 'completed', timestamp: 1,
+      guidancePlannerOutput: {
+        directionGuidance: 'Connect cooling-hub check-ins to pharmacy refill visits.',
+        previousIdeas: ['neighbour check-ins', 'pharmacy partners'],
+        writingContextSummary: 'The participant has proposed neighbourhood heat alerts.',
+      },
+    }];
+    render(<DebugPanel isTestUser isPracticeSession={false} transcript={[]} partialTranscript={null} stages={stages} />);
+    fireEvent.click(screen.getByRole('button', { name: /debug/i }));
+    fireEvent.click(screen.getByRole('button', { name: /guidance planner output/i }));
+    expect(screen.getByText(/cooling-hub check-ins/)).toBeInTheDocument();
+    expect(screen.getByText(/writingContextSummary/)).toBeInTheDocument();
+  });
 });

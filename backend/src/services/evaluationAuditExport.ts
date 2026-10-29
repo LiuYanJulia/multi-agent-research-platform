@@ -29,6 +29,7 @@ function formatAuditMarkdown(sessionId: string, rows: any[]): string {
     const controllerInput = parsePayload(row.controller_input_payload);
     const controllerOutput = parsePayload(row.controller_output_payload);
     const ledgerDelta = parsePayload(row.move_ledger_delta);
+    const guidanceGeneration = parsePayload(row.guidance_generation_payload);
     const aiGuidance = evaluationOutput && typeof evaluationOutput === 'object'
       ? (evaluationOutput as Record<string, unknown>).aiGuidance ?? null
       : null;
@@ -58,6 +59,10 @@ function formatAuditMarkdown(sessionId: string, rows: any[]): string {
       '',
       jsonBlock(aiGuidance),
       '',
+      '### Guidance-generation bundle',
+      '',
+      jsonBlock(guidanceGeneration),
+      '',
       '### Move-ledger delta for this evaluation',
       '',
       jsonBlock(ledgerDelta),
@@ -84,6 +89,7 @@ export async function exportEvaluationAudit(db: SqlExecutor, sessionId: string):
     controller_input_payload: parsePayload(row.controller_input_payload),
     controller_output_payload: parsePayload(row.controller_output_payload),
     move_ledger_delta: parsePayload(row.move_ledger_delta),
+    guidance_generation_payload: parsePayload(row.guidance_generation_payload),
   }));
   const exportedAt = new Date().toISOString();
   const json = {
