@@ -25,11 +25,11 @@ const GuidancePanel: React.FC<GuidancePanelProps> = ({ guidance, newlyDeliveredI
         data-testid="guidance-panel-container"
         style={{
           flex: '1 1 0', minHeight: 0, overflowY: 'auto', padding: '0.75rem 1rem',
-          backgroundColor: 'rgba(17, 24, 39, 0.5)', border: '1px solid rgba(17, 24, 39, 0.7)', borderRadius: '0.5rem',
+          backgroundColor: '#ffffff', border: '1px solid #e5e7eb', borderRadius: '0.5rem',
         }}
       >
         {visibleGuidance.length === 0 ? (
-          <p style={{ height: '100%', margin: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#e5e7eb', fontSize: '0.875rem', lineHeight: 1.5, textAlign: 'center' }}>
+          <p style={{ height: '100%', margin: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6b7280', fontSize: '0.875rem', lineHeight: 1.5, textAlign: 'center' }}>
             {EMPTY_GUIDANCE_COPY}
           </p>
         ) : visibleGuidance.map((item) => (

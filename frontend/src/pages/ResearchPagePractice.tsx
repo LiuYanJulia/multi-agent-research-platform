@@ -270,7 +270,7 @@ const ResearchPagePractice: React.FC<ResearchPagePracticeProps> = ({
 
         {/* Right Half - Proactive guidance above final writing */}
         <div className="section-right section-right-with-guidance">
-          <div className="section-guidance">
+          <div className="section-guidance p-4">
             <GuidancePanel guidance={displayedGuidance} newlyDeliveredId={newlyDeliveredGuidanceId} />
           </div>
 

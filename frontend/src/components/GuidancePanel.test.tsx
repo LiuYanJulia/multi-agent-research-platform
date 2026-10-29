@@ -21,7 +21,7 @@ describe('GuidancePanel', () => {
 
     expect(screen.getByRole('heading', { name: 'AI Guidance' })).toBeInTheDocument();
     expect(screen.getByText('Proactive AI guidance will be shown here. Please consider them into your own thinking')).toBeInTheDocument();
-    expect(screen.getByTestId('guidance-panel-container')).toHaveStyle({ backgroundColor: 'rgba(17, 24, 39, 0.5)' });
+    expect(screen.getByTestId('guidance-panel-container')).toHaveStyle({ backgroundColor: '#ffffff' });
   });
 
   it('shows only the three newest guidance cards and flashes the newest delivery five times', () => {
