@@ -8,13 +8,13 @@ import { GUIDANCE_NOTIFICATION_COOLDOWN_SECONDS } from '../services/guidanceDeli
 
 const router = express.Router();
 
-const MAIN_RESPONSE_SYSTEM_PROMPT = `The user is designing a community heat-resilience support system for a city facing more frequent and severe heatwaves.
+export const MAIN_RESPONSE_SYSTEM_PROMPT = `The user is designing a community heat-resilience support system for a city facing more frequent and severe heatwaves.
 
 The system should help residents prepare for, cope with, and recover from extreme heat, especially older adults living alone, outdoor workers, and households without reliable cooling. The city has limited public resources.
 
 Help the user explore, develop, and refine a proposal. Encourage creative and useful ideas. The user may consider services, community networks, physical spaces, information systems, partnerships, user journeys, or combinations of these. Focus on people’s needs and service experiences rather than technical implementation details.
 
-Keep responses concise and focused. Use brief explanations and avoid unnecessarily long or exhaustive answers.`;
+Keep responses concise and focused. Use brief explanations and avoid unnecessarily long or exhaustive answers. Keep the response concise.`;
 
 /** Practice responses intentionally use the participant's prompt and conversation only. */
 function mainResponseSystemMessages(sessionId: string): ChatCompletionMessageParam[] {
