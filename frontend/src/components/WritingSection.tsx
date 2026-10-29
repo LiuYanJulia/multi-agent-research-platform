@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { WebRTCTranscriptRef } from './WebRTCTranscript';
+import { editableHtmlToMarkdown, markdownToEditableHtml } from './markdownEditor';
 
 interface WritingSectionProps {
   sessionId?: string;
@@ -59,7 +60,7 @@ const WritingSection: React.FC<WritingSectionProps> = ({
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
   const [showTimeWarning, setShowTimeWarning] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
 
   // Submission confirmations are part of the timed task flow. Let the parent freeze
   // its shared experiment timer while either local confirmation is visible.
@@ -75,6 +76,15 @@ const WritingSection: React.FC<WritingSectionProps> = ({
     setWordCount(words);
     setCharCount(content.length);
     // Note: text_insert/text_delete is now tracked globally by useInteractionLogger
+  }, [content]);
+
+  // The DOM remains untouched while the participant is typing, so the cursor and
+  // selection are stable. Programmatic changes such as Clear re-render from the
+  // canonical Markdown string.
+  useEffect(() => {
+    if (editorRef.current && document.activeElement !== editorRef.current) {
+      editorRef.current.innerHTML = markdownToEditableHtml(content);
+    }
   }, [content]);
 
   const autoSave = useCallback(async () => {
@@ -253,7 +263,23 @@ const WritingSection: React.FC<WritingSectionProps> = ({
     });
 
     setContent('');
+    if (editorRef.current) editorRef.current.innerHTML = markdownToEditableHtml('');
     setLastSaved(null);
+  };
+
+  const syncRichEditor = () => {
+    if (editorRef.current) setContent(editableHtmlToMarkdown(editorRef.current.innerHTML));
+  };
+
+  const runEditorCommand = (command: 'bold' | 'insertUnorderedList' | 'insertOrderedList' | 'insertHTML') => {
+    if (locked || !editorRef.current) return;
+    editorRef.current.focus();
+    if (command === 'insertHTML') {
+      document.execCommand('insertHTML', false, '<table><thead><tr><th>Header</th><th>Header</th></tr></thead><tbody><tr><td>Content</td><td>Content</td></tr></tbody></table><p><br></p>');
+    } else {
+      document.execCommand(command);
+    }
+    syncRichEditor();
   };
 
   const formatTimestamp = (date: Date) => {
@@ -347,64 +373,65 @@ const WritingSection: React.FC<WritingSectionProps> = ({
               )}
             </div>
           )}
-          <textarea
-            ref={textareaRef}
-            data-testid="writing-textarea"
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            disabled={locked}
-            placeholder="Combine your insights here. Write your final thoughts, conclusions, or answers..."
+          <div style={{ display: 'flex', gap: '0.375rem', marginBottom: '0.5rem' }} aria-label="Writing formatting controls">
+            {([
+              ['Bold', 'bold', 'B'],
+              ['Bulleted list', 'insertUnorderedList', '• List'],
+              ['Numbered list', 'insertOrderedList', '1. List'],
+              ['Insert table', 'insertHTML', 'Table'],
+            ] as const).map(([label, command, copy]) => (
+              <button key={command} type="button" aria-label={label} disabled={locked}
+                onMouseDown={(event) => { event.preventDefault(); runEditorCommand(command); }}
+                style={{ padding: '0.25rem 0.5rem', border: '1px solid #d1d5db', borderRadius: '0.25rem', background: '#fff', color: '#374151', fontSize: '0.75rem', cursor: locked ? 'not-allowed' : 'pointer', opacity: locked ? 0.5 : 1 }}>
+                {copy}
+              </button>
+            ))}
+          </div>
+          <div
+            ref={editorRef}
+            data-testid="writing-rich-editor"
+            contentEditable={!locked}
+            suppressContentEditableWarning
+            role="textbox"
+            aria-multiline="true"
+            aria-label="Writing editor"
+            onInput={syncRichEditor}
+            onPaste={(event) => {
+              event.preventDefault();
+              const clipboard = event.clipboardData;
+              const pastedHtml = clipboard.getData('text/html');
+              const pastedText = clipboard.getData('text/plain');
+              const markdown = pastedHtml ? editableHtmlToMarkdown(pastedHtml) : pastedText;
+              document.execCommand('insertHTML', false, markdownToEditableHtml(markdown));
+              syncRichEditor();
+            }}
+            onKeyDown={(event) => {
+              if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'b') {
+                event.preventDefault();
+                runEditorCommand('bold');
+              }
+            }}
             style={{
-              width: '100%',
-              minHeight: '500px',
-              padding: '1rem',
-              border: '1px solid #e5e7eb',
-              borderRadius: '0.5rem',
-              resize: 'vertical',
-              outline: 'none',
-              fontSize: '0.875rem',
-              lineHeight: '1.625',
-              transition: 'border-color 0.2s, box-shadow 0.2s',
-              boxSizing: 'border-box',
-              wordWrap: 'break-word',
-              overflowWrap: 'break-word',
-              whiteSpace: 'pre-wrap'
+              width: '100%', minHeight: '500px', padding: '1rem', border: '1px solid #e5e7eb', borderRadius: '0.5rem',
+              outline: 'none', fontSize: '0.875rem', lineHeight: '1.625', transition: 'border-color 0.2s, box-shadow 0.2s',
+              boxSizing: 'border-box', wordWrap: 'break-word', overflowWrap: 'break-word', overflowY: 'auto', background: '#fff',
             }}
-            onFocus={(e) => {
-              e.target.style.borderColor = '#3b82f6';
-              e.target.style.boxShadow = '0 0 0 2px rgba(59, 130, 246, 0.5)';
-              // Log focus event
-              logger.logEvent({
-                eventType: 'ui',
-                action: 'input_focus',
-                target: {
-                  element: 'writing-textarea',
-                  section: 'writing',
-                },
-                metadata: {
-                  currentWordCount: wordCount,
-                  currentCharCount: charCount,
-                },
-              });
+            onFocus={(event) => {
+              event.currentTarget.style.borderColor = '#3b82f6';
+              event.currentTarget.style.boxShadow = '0 0 0 2px rgba(59, 130, 246, 0.5)';
+              logger.logEvent({ eventType: 'ui', action: 'input_focus', target: { element: 'writing-textarea', section: 'writing' }, metadata: { currentWordCount: wordCount, currentCharCount: charCount } });
             }}
-            onBlur={(e) => {
-              e.target.style.borderColor = '#e5e7eb';
-              e.target.style.boxShadow = 'none';
-              // Log blur event
-              logger.logEvent({
-                eventType: 'ui',
-                action: 'input_blur',
-                target: {
-                  element: 'writing-textarea',
-                  section: 'writing',
-                },
-                metadata: {
-                  currentWordCount: wordCount,
-                  currentCharCount: charCount,
-                },
-              });
+            onBlur={(event) => {
+              event.currentTarget.style.borderColor = '#e5e7eb';
+              event.currentTarget.style.boxShadow = 'none';
+              logger.logEvent({ eventType: 'ui', action: 'input_blur', target: { element: 'writing-textarea', section: 'writing' }, metadata: { currentWordCount: wordCount, currentCharCount: charCount } });
             }}
           />
+          {!content && !locked && (
+            <span style={{ position: 'absolute', top: '3.55rem', left: '1rem', color: '#9ca3af', fontSize: '0.875rem', pointerEvents: 'none' }}>
+              Combine your insights here. Write your final thoughts, conclusions, or answers...
+            </span>
+          )}
         </div>
 
         {/* Bottom Section - Status Bar and Submission (shown only once writing is unlocked) */}
