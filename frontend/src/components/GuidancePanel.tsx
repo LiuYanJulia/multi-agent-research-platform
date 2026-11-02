@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 
 export interface DisplayedGuidance {
@@ -19,11 +19,23 @@ const EMPTY_GUIDANCE_COPY = 'Proactive AI guidance will be shown here. Please co
 
 const GuidancePanel: React.FC<GuidancePanelProps> = ({ guidance, newlyDeliveredId = null }) => {
   const visibleGuidance = guidance.slice(-3);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!newlyDeliveredId) return;
+    const container = containerRef.current;
+    const card = document.querySelector(`[data-testid="guidance-card-${newlyDeliveredId}"]`) as HTMLElement | null;
+    if (!container || !card) return;
+    requestAnimationFrame(() => {
+      container.scrollTo({ top: Math.max(0, card.offsetTop - container.offsetTop), behavior: 'smooth' });
+    });
+  }, [newlyDeliveredId, visibleGuidance.length]);
 
   return (
     <section aria-label="AI Guidance" style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <h2 style={{ fontSize: '1.125rem', fontWeight: 600, margin: '0 0 0.75rem' }} className="text-token-text-primary">AI Guidance</h2>
       <div
+        ref={containerRef}
         data-testid="guidance-panel-container"
         data-interaction-section="guidance"
         style={{

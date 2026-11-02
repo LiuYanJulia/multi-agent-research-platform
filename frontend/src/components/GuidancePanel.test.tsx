@@ -35,6 +35,21 @@ describe('GuidancePanel', () => {
     expect(screen.getByTestId('guidance-card-4')).toHaveClass('guidance-panel-flash-five');
   });
 
+  it('reveals the beginning of a newly delivered guidance card after it mounts', () => {
+    const requestAnimationFrame = window.requestAnimationFrame;
+    window.requestAnimationFrame = ((callback: FrameRequestCallback) => { callback(0); return 0; }) as typeof window.requestAnimationFrame;
+    const { rerender } = render(<GuidancePanel guidance={[guidance('1'), guidance('2'), guidance('3')]} />);
+    const container = screen.getByTestId('guidance-panel-container');
+    const scrollTo = jest.fn();
+    Object.defineProperty(container, 'scrollTo', { configurable: true, value: scrollTo });
+    try {
+      rerender(<GuidancePanel guidance={[guidance('2'), guidance('3'), guidance('4')]} newlyDeliveredId="4" />);
+      expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ top: expect.any(Number) }));
+    } finally {
+      window.requestAnimationFrame = requestAnimationFrame;
+    }
+  });
+
   it('marks guidance with its raw section and sequential message ID for interaction logging', () => {
     render(<GuidancePanel guidance={[guidance('7')]} />);
 

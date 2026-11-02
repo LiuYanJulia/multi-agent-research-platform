@@ -18,6 +18,11 @@ describe('WritingSection rich Markdown editor', () => {
     expect(screen.queryByRole('button', { name: 'Insert table' })).not.toBeInTheDocument();
   });
 
+  it('keeps writing and submission content in a mouse-scrollable container', () => {
+    render(<WritingSection logger={logger} isPracticeMode />);
+    expect(screen.getByTestId('writing-section-scroll-container')).toHaveStyle({ overflowY: 'auto', minHeight: '0' });
+  });
+
   it('clears the rich editor and its Markdown state together', () => {
     jest.spyOn(window, 'confirm').mockReturnValue(true);
     render(<WritingSection logger={logger} isPracticeMode />);

@@ -287,7 +287,13 @@ const WritingSection: React.FC<WritingSectionProps> = ({
 
   return (
     <>
-      <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <div
+        data-testid="writing-section-scroll-container"
+        style={{
+          height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column',
+          overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'contain',
+        }}
+      >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
           <div>
             <h2 style={{ fontSize: '1.125rem', fontWeight: '600', marginBottom: '0.25rem' }} className="text-token-text-primary">
@@ -321,7 +327,7 @@ const WritingSection: React.FC<WritingSectionProps> = ({
         </div>
 
         {/* Writing Area - You can change minHeight here (e.g., '400px', '500px') */}
-        <div style={{ marginBottom: '0.75rem', overflow: 'hidden', position: 'relative' }}>
+        <div style={{ marginBottom: '0.75rem', overflow: 'hidden', position: 'relative', flexShrink: 0 }}>
           {locked && (
             <div style={{
               position: 'absolute',
