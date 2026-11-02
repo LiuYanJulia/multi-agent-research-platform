@@ -693,6 +693,94 @@ export async function generateGuidancePlanner(
   }
 }
 
+export type GuidancePlannerCompletion = (systemPrompt: string, runtimeInput: string) => Promise<string>;
+
+function plannerErrorCategory(error: unknown): GuidancePlannerErrorCategory {
+  const message = error instanceof Error ? error.message : String(error);
+  return /timed out/i.test(message) ? 'timeout' : 'api_error';
+}
+
+function skippedWritingTrace(): GuidancePlannerComponentTrace<WritingSummaryOutput> {
+  const now = new Date().toISOString();
+  return {
+    component: 'writingSummarizer', systemPrompt: null, runtimeInput: null, rawOutput: null,
+    output: null, fallbackOutput: null, modelUsed: null, status: 'skipped', startedAt: now, completedAt: now,
+  };
+}
+
+async function runPlannerComponent<T>(
+  component: GuidancePlannerComponentName,
+  systemPrompt: string,
+  runtimeInput: string,
+  model: string | null,
+  completion: GuidancePlannerCompletion | null,
+  parse: (raw: string) => T | null,
+  fallbackOutput: T | null,
+): Promise<GuidancePlannerComponentTrace<T>> {
+  const startedAt = new Date().toISOString();
+  if (!completion) {
+    const completedAt = new Date().toISOString();
+    return { component, systemPrompt, runtimeInput, rawOutput: null, output: fallbackOutput, fallbackOutput, modelUsed: model, status: 'fallback', errorCategory: 'api_error', errorMessage: 'LLM planner unavailable', startedAt, completedAt };
+  }
+  try {
+    const rawOutput = await completion(systemPrompt, runtimeInput);
+    const output = parse(rawOutput);
+    const completedAt = new Date().toISOString();
+    return output
+      ? { component, systemPrompt, runtimeInput, rawOutput, output, fallbackOutput, modelUsed: model, status: 'success', startedAt, completedAt }
+      : { component, systemPrompt, runtimeInput, rawOutput, output: fallbackOutput, fallbackOutput, modelUsed: model, status: 'fallback', errorCategory: 'invalid_json', errorMessage: 'Response did not match the required JSON shape', startedAt, completedAt };
+  } catch (error) {
+    const completedAt = new Date().toISOString();
+    return { component, systemPrompt, runtimeInput, rawOutput: null, output: fallbackOutput, fallbackOutput, modelUsed: model, status: 'fallback', errorCategory: plannerErrorCategory(error), errorMessage: error instanceof Error ? error.message : String(error), startedAt, completedAt };
+  }
+}
+
+function defaultPlannerCompletion(model: string): GuidancePlannerCompletion {
+  return async (systemPrompt, runtimeInput) => {
+    const completion = await withTimeout(getOpenAI().chat.completions.create({
+      model,
+      reasoning_effort: 'low',
+      messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: runtimeInput }],
+      max_completion_tokens: 700,
+    }), 10_000);
+    return completion.choices[0]?.message?.content ?? '';
+  };
+}
+
+/** Runs the independent planner responsibilities concurrently and retains every trace for research audit. */
+export async function generateSplitGuidancePlanner(
+  spec: GuidanceSpec,
+  currentWriting: string,
+  completionOverride?: GuidancePlannerCompletion,
+): Promise<SplitGuidancePlannerResult> {
+  const model = process.env.GUIDANCE_MODEL_ID || process.env.OPENAI_MODEL || 'gpt-5.6-terra';
+  const llmAvailable = guidanceGenerationMode() !== 'template' && Boolean(process.env.OPENAI_API_KEY);
+  const completion = completionOverride ?? (llmAvailable ? defaultPlannerCompletion(model) : null);
+  const ideaFallback: IdeaExtractionOutput = {
+    previousIdeas: spec.selectedContextMoves.map((move) => move.description).filter(Boolean),
+  };
+  const directionFallback: DirectionOutput = { directionGuidance: plannerDirectionFallback(spec) };
+  const writingRequested = Boolean(currentWriting.trim());
+  const [directionPlanner, ideaExtractor, writingSummarizer] = await Promise.all([
+    runPlannerComponent('directionPlanner', directionPlannerSystemPrompt(spec), buildDirectionPlannerRuntimeInput(spec), completion ? model : null, completion, parseDirectionOutput, directionFallback),
+    runPlannerComponent('ideaExtractor', IDEA_EXTRACTOR_SYSTEM_PROMPT, buildIdeaExtractorRuntimeInput(spec.selectedContextMoves), completion ? model : null, completion, parseIdeaExtractorOutput, ideaFallback),
+    writingRequested
+      ? runPlannerComponent('writingSummarizer', WRITING_SUMMARIZER_SYSTEM_PROMPT, buildWritingSummaryRuntimeInput(currentWriting), completion ? model : null, completion, parseWritingSummaryOutput, null)
+      : Promise.resolve(skippedWritingTrace()),
+  ]);
+  const previousIdeas = ideaExtractor.output?.previousIdeas.length ? ideaExtractor.output.previousIdeas : ideaFallback.previousIdeas;
+  return {
+    directionGuidance: directionPlanner.output?.directionGuidance ?? directionFallback.directionGuidance,
+    previousIdeas,
+    ...(writingSummarizer.status === 'success' && writingSummarizer.output?.writingContextSummary
+      ? { writingContextSummary: writingSummarizer.output.writingContextSummary }
+      : {}),
+    writingSummarizer,
+    ideaExtractor,
+    directionPlanner,
+  };
+}
+
 function fallbackKeywordPhrase(value: string): string {
   let phrase = conciseGuidance(value).replace(/[.]+$/, '').trim();
   if (/\b(?:want(?:s|ed|ing)?\s+to\s+)?(?:check|ask|consult|talk)\s+(?:with|to)\s+(?:the\s+)?ai\b/i.test(phrase)) {

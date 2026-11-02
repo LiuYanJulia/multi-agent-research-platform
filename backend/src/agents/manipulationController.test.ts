@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   directionPlannerSystemPrompt,
+  generateSplitGuidancePlanner,
   guidanceDisplaySummary,
   guidanceResponseWordLimit,
   parseDirectionOutput,
@@ -60,4 +61,42 @@ test('every direction condition has two few-shot examples and its required inter
     assert.equal((prompt.match(/Example input:/g) ?? []).length, 2);
     assert.match(prompt, /You create one instruction prompt for a design-idea generator/i);
   }
+});
+
+test('runs all applicable planner components concurrently and skips the writing summarizer when writing is empty', async () => {
+  const calls: string[] = [];
+  const completion = async (systemPrompt: string) => {
+    calls.push(systemPrompt);
+    if (systemPrompt.includes('earlier design ideas')) return '{"previousIdeas":["Cooling hubs."]}';
+    return '{"directionGuidance":"Develop six genuinely different paths."}';
+  };
+  const result = await generateSplitGuidancePlanner({
+    targetOrientation: 'D', magnitude: 'high', selectedContextMoves: [
+      { moveId: 1, moveType: 1, orientation: 'D', description: 'Cooling hubs' },
+    ], recentWritingContext: [], policyVersion: 'tm-context-v2', triggerOrientation: 'D', phase: 'collect', contextLimit: 1, availableContextCount: 1, requiredIdeaCount: 6,
+  }, '', completion);
+
+  assert.equal(calls.length, 2);
+  assert.equal(result.writingSummarizer.status, 'skipped');
+  assert.equal(result.writingContextSummary, undefined);
+  assert.deepEqual(result.previousIdeas, ['Cooling hubs.']);
+});
+
+test('keeps generating guidance with a component-specific fallback after planner failure', async () => {
+  const completion = async (systemPrompt: string) => {
+    if (systemPrompt.includes('earlier design ideas')) throw new Error('idea service unavailable');
+    if (systemPrompt.includes('current design writing')) throw new Error('summary service unavailable');
+    return '{"directionGuidance":"Develop a new coordination mechanism."}';
+  };
+  const result = await generateSplitGuidancePlanner({
+    targetOrientation: 'C', magnitude: 'high', selectedContextMoves: [
+      { moveId: 1, moveType: 4, orientation: 'C', description: 'Heat buddy transport connection' },
+    ], recentWritingContext: [], policyVersion: 'tm-context-v2', triggerOrientation: 'C', phase: 'synthesize', contextLimit: 1, availableContextCount: 1, requiredIdeaCount: null,
+  }, 'Residents use cooling hubs.', completion);
+
+  assert.equal(result.ideaExtractor.status, 'fallback');
+  assert.deepEqual(result.previousIdeas, ['Heat buddy transport connection']);
+  assert.equal(result.writingSummarizer.status, 'fallback');
+  assert.equal(result.writingContextSummary, undefined);
+  assert.equal(result.directionPlanner.status, 'success');
 });
