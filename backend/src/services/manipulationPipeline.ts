@@ -3,7 +3,7 @@ import mysql from 'mysql2/promise';
 import { evaluateTimelinePartition, EvaluationResult, hasSubstantiveParticipantContent } from '../agents/moveTypeEvaluator';
 import { decideCurrentOrientation, DecisionContextMove, DecisionResult } from '../agents/decisionAgent';
 import { buildSessionTimeline, TimelineEvent, unevaluatedTail } from './eventTimelineBuilder';
-import { runManipulationController, getManipulationState, EvaluatedMove, ControllerInstruction, MOVE_TYPE_NAMES, GuidancePlannerOutput } from '../agents/manipulationController';
+import { runManipulationController, getManipulationState, EvaluatedMove, ControllerInstruction, MOVE_TYPE_NAMES, GuidancePlannerOutput, SplitGuidancePlannerResult } from '../agents/manipulationController';
 
 type SqlExecutor = Pick<mysql.Pool, 'execute'>;
 
@@ -42,7 +42,7 @@ export interface AgentStageEvent {
   // reason when no model response was available.
   evaluationRaw?: unknown;
   /** Internal planner output for a delivered guidance card. */
-  guidancePlannerOutput?: GuidancePlannerOutput;
+  guidancePlannerOutput?: GuidancePlannerOutput | SplitGuidancePlannerResult;
   /** Exact messages supplied to generate the visible AI-response portion of a guidance card. */
   guidanceResponseInput?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
   /** Full three-part guidance card, retained for test-mode auditing only. */

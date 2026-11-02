@@ -3,7 +3,7 @@ import OpenAI from 'openai';
 import { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { isPracticeSession } from '../utils/sessionUtils';
 import { AgentStageEvent, runIncrementalPipeline, logMainResponseTurn, updateGuidanceGenerationAudit } from '../services/manipulationPipeline';
-import { generateGuidancePlanner, guidanceDisplaySummary, guidanceResponseWordLimit, GuidancePlannerOutput } from '../agents/manipulationController';
+import { generateSplitGuidancePlanner, guidanceDisplaySummary, guidanceResponseWordLimit } from '../agents/manipulationController';
 
 const router = express.Router();
 
@@ -37,7 +37,33 @@ export function guidanceGenerationEligible(elapsedMilliseconds: number): boolean
 }
 
 const GUIDANCE_RESERVATION_SECONDS = GUIDANCE_GENERATION_MIN_ELAPSED_SECONDS + 5;
-const DIRECT_GUIDANCE_MEMORY_SYSTEM_PROMPT = `You are generating a proactive AI-guidance card, not replying normally to the participant. The private planner direction, prior ideas, writing summary, and delivered-guidance memory below are context only. Do not repeat a recommendation already delivered in guidance or an idea already developed in the participant's writing. Follow the requested intervention while remaining grounded in the participant's design. Output only the guidance content.`;
+export const GUIDANCE_MAIN_RESPONSE_SYSTEM_PROMPT = `The participant is developing a creative and useful policy or service design for a city facing more frequent and severe heatwaves.
+
+The design should help residents prepare for, cope with, and recover from extreme heat, especially older adults living alone, outdoor workers, and households without reliable cooling. The city has limited public resources. Focus on people's needs, service experiences, and practical design choices.
+
+Your job is to generate next design idea or ideas based on the given Direction and Earlier participant ideas, to provide help and suggestions based on existing ideas and the target direction.
+
+The user message always provides:
+
+- Direction: the kind of design development to make next.
+- Earlier participant ideas: ideas selected from the participant's previous activity. Use these as the starting material for the next development.
+
+The user message may also provide either or both of the following:
+
+- Existing writing: ideas already developed in the participant's written proposal.
+- Earlier suggestions: ideas already suggested to the participant.
+
+Follow the Direction and build from the Earlier participant ideas.
+
+When Existing writing is provided, do not propose, rephrase, rename, or merely repackage any mechanism, workflow, recommendation, or named concept already present in it.
+
+When Earlier suggestions are provided, do not propose, rephrase, rename, or merely repackage any mechanism, workflow, recommendation, or named concept already present in them.
+
+When neither optional section is provided, develop the next ideas from the Direction and Earlier participant ideas without applying either of those two avoidance constraints.
+
+Add a genuinely new mechanism, relationship, decision, interaction, or scenario. Mention an existing idea only when necessary to explain how the new element connects to it.
+
+Return only the guidance for the participant.`;
 
 export const MAIN_RESPONSE_SYSTEM_PROMPT = `The user is designing a community heat-resilience support system for a city facing more frequent and severe heatwaves.
 
@@ -54,6 +80,31 @@ function mainResponseSystemMessages(sessionId: string): ChatCompletionMessagePar
     : [{ role: 'system', content: MAIN_RESPONSE_SYSTEM_PROMPT }];
 }
 
+export function buildFinalGuidanceInstruction(
+  planner: { directionGuidance: string; previousIdeas: string[]; writingContextSummary?: string },
+  guidanceMemory: string[],
+  wordLimit: number,
+  orientation: 'D' | 'C',
+): string {
+  const sections = [
+    `Direction:\n${planner.directionGuidance}`,
+    `Earlier participant ideas:\n${planner.previousIdeas.map((idea, index) => `${index + 1}. ${idea}`).join('\n')}`,
+  ];
+  if (planner.writingContextSummary) sections.push(`Existing writing:\n${planner.writingContextSummary}`);
+  if (guidanceMemory.length) sections.push(`Earlier suggestions:\n${guidanceMemory.map((item, index) => `${index + 1}. ${item}`).join('\n')}`);
+  sections.push(`Your task is to generate new idea guidance based on the Direction and Earlier participant ideas.
+
+If Existing writing is provided above, avoid providing ideas that repeat, rephrase, rename, or merely repackage ideas already developed there.
+
+If Earlier suggestions are provided above, avoid providing ideas that repeat, rephrase, rename, or merely repackage ideas already suggested there.
+
+Stay within ${wordLimit} English words.
+Start with one sentence that summarises the proposed direction.
+Then use concise Markdown points.
+${orientation === 'D' ? 'For divergent guidance, use a numbered list that preserves the requested number of ideas.\n' : ''}Do not add a preamble or end with a question.`);
+  return sections.join('\n\n');
+}
+
 async function createDirectGuidancePayload(db: any, sessionId: string, result: any) {
   const guidanceSpec = result.instruction?.guidanceSpec;
   if (!guidanceSpec) return null;
@@ -66,14 +117,12 @@ async function createDirectGuidancePayload(db: any, sessionId: string, result: a
     [sessionId],
   );
   const currentWriting = String((writingRows as any[])[0]?.content ?? '');
-  const plannerResult = await generateGuidancePlanner(guidanceSpec, currentWriting, guidanceMemory);
-  const planner = plannerResult.planner;
+  const planner = await generateSplitGuidancePlanner(guidanceSpec, currentWriting);
   const wordLimit = guidanceResponseWordLimit(guidanceSpec.targetOrientation, guidanceSpec.magnitude);
-  const finalInstruction = `Private guidance direction:\n${planner.directionGuidance}\n\nParticipant idea context:\n${planner.previousIdeas.map((idea, index) => `${index + 1}. ${idea}`).join('\n')}\n\nWriting memory (do not repeat):\n${planner.writingContextSummary}\n\nDelivered guidance memory (do not repeat):\n${guidanceMemory.length ? guidanceMemory.map((item, index) => `${index + 1}. ${item}`).join('\n') : 'None.'}\n\nStay within ${wordLimit} English words. Start with one sentence summarising the proposed direction. On a new line, use concise Markdown points to elaborate. For divergent guidance, use a numbered list that preserves the requested number of ideas. Do not add a preamble, repeat this instruction, or end with a question.`;
+  const finalInstruction = buildFinalGuidanceInstruction(planner, guidanceMemory, wordLimit, guidanceSpec.targetOrientation);
   const context: ChatCompletionMessageParam[] = conversation.map((row): ChatCompletionMessageParam => ({ role: row.role, content: row.content }));
   const responseMessages: ChatCompletionMessageParam[] = [
-    ...mainResponseSystemMessages(sessionId),
-    { role: 'system', content: DIRECT_GUIDANCE_MEMORY_SYSTEM_PROMPT },
+    { role: 'system', content: GUIDANCE_MAIN_RESPONSE_SYSTEM_PROMPT },
     ...context,
     { role: 'user', content: finalInstruction },
   ];
@@ -99,14 +148,14 @@ async function createDirectGuidancePayload(db: any, sessionId: string, result: a
   );
   if (result.turnIndex !== undefined) {
     await logMainResponseTurn(db, sessionId, result.turnIndex, {
-      input: { planner: plannerResult, currentWriting, guidanceMemory, messages: guidanceResponseInput }, output: response, modelUsed: modelName,
+      input: { planner, currentWriting, guidanceMemory, messages: guidanceResponseInput }, output: response, modelUsed: modelName,
       startedAt, completedAt: new Date(), status: 'success',
     });
   }
   return {
     messageId: Number((insert as any).insertId), directionGuidance: planner.directionGuidance,
     previousIdeas: planner.previousIdeas, displaySummary, response, displayAt: displayAt.toISOString(), guidanceResponseInput,
-    planner, plannerResult, currentWriting, guidanceMemory,
+    planner, currentWriting, guidanceMemory,
   };
 }
 
@@ -158,10 +207,14 @@ router.post('/analyze', async (req, res) => {
           await updateGuidanceGenerationAudit(db, sessionId, result.turnIndex, {
             deliveryGate,
             planner: {
-              input: { ...guidance.plannerResult.input, currentWriting: guidance.currentWriting, recentDisplayedGuidance: guidance.guidanceMemory },
-              output: guidance.planner,
-              modelUsed: guidance.plannerResult.modelUsed,
-              usedFallback: guidance.plannerResult.usedFallback,
+              writingSummarizer: guidance.planner.writingSummarizer,
+              ideaExtractor: guidance.planner.ideaExtractor,
+              directionPlanner: guidance.planner.directionPlanner,
+              output: {
+                directionGuidance: guidance.planner.directionGuidance,
+                previousIdeas: guidance.planner.previousIdeas,
+                writingContextSummary: guidance.planner.writingContextSummary,
+              },
             },
             mainResponse: {
               input: guidance.guidanceResponseInput,
@@ -187,7 +240,7 @@ router.post('/analyze', async (req, res) => {
         agent: 'main_response_agent', status: 'completed',
         detail: 'Generated the AI-response portion of the guidance card.',
         modelUsed: process.env.OPENAI_MODEL || 'gpt-5.6-terra',
-        guidancePlannerOutput: guidance.planner as GuidancePlannerOutput,
+        guidancePlannerOutput: guidance.planner,
         guidanceResponseInput: guidance.guidanceResponseInput,
         guidanceCard: {
           displaySummary: guidance.displaySummary,
