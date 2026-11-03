@@ -291,10 +291,13 @@ const WritingSection: React.FC<WritingSectionProps> = ({
         data-testid="writing-section-scroll-container"
         style={{
           height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column',
-          overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'contain',
+          overflow: 'hidden',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+        <div
+          data-testid="writing-section-header"
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', flexShrink: 0 }}
+        >
           <div>
             <h2 style={{ fontSize: '1.125rem', fontWeight: '600', marginBottom: '0.25rem' }} className="text-token-text-primary">
               Writing & Submission
@@ -327,7 +330,13 @@ const WritingSection: React.FC<WritingSectionProps> = ({
         </div>
 
         {/* Writing Area - You can change minHeight here (e.g., '400px', '500px') */}
-        <div style={{ marginBottom: '0.75rem', overflow: 'hidden', position: 'relative', flexShrink: 0 }}>
+        <div
+          data-testid="writing-editor-scroll-container"
+          style={{
+            marginBottom: '0.75rem', overflow: 'hidden', position: 'relative',
+            display: 'flex', flexDirection: 'column', flex: '1 1 0', minHeight: 0,
+          }}
+        >
           {locked && (
             <div style={{
               position: 'absolute',
@@ -400,7 +409,7 @@ const WritingSection: React.FC<WritingSectionProps> = ({
               }
             }}
             style={{
-              width: '100%', minHeight: '500px', padding: '1rem', border: '1px solid #e5e7eb', borderRadius: '0.5rem',
+              width: '100%', height: '100%', minHeight: 0, flex: 1, padding: '1rem', border: '1px solid #e5e7eb', borderRadius: '0.5rem',
               outline: 'none', fontSize: '0.875rem', lineHeight: '1.625', transition: 'border-color 0.2s, box-shadow 0.2s',
               boxSizing: 'border-box', wordWrap: 'break-word', overflowWrap: 'break-word', overflowY: 'auto', background: '#fff',
             }}
@@ -423,7 +432,7 @@ const WritingSection: React.FC<WritingSectionProps> = ({
         </div>
 
         {/* Bottom Section - Status Bar and Submission (shown only once writing is unlocked) */}
-        {!locked && <div>
+        {!locked && <div data-testid="writing-section-footer" style={{ flexShrink: 0 }}>
           {/* Status Bar */}
           <div style={{ marginBottom: '0.75rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '1rem' }} className="text-token-text-secondary">
             <span>Words: {wordCount}</span>

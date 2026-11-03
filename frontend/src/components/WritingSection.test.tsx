@@ -18,9 +18,11 @@ describe('WritingSection rich Markdown editor', () => {
     expect(screen.queryByRole('button', { name: 'Insert table' })).not.toBeInTheDocument();
   });
 
-  it('keeps writing and submission content in a mouse-scrollable container', () => {
+  it('keeps the heading and submission area fixed while the editor scrolls', () => {
     render(<WritingSection logger={logger} isPracticeMode />);
-    expect(screen.getByTestId('writing-section-scroll-container')).toHaveStyle({ overflowY: 'auto', minHeight: '0' });
+    expect(screen.getByTestId('writing-section-scroll-container')).toHaveStyle({ overflow: 'hidden', minHeight: '0' });
+    expect(screen.getByTestId('writing-editor-scroll-container')).toHaveStyle({ flex: '1 1 0', minHeight: '0' });
+    expect(screen.getByTestId('writing-rich-editor')).toHaveStyle({ overflowY: 'auto', minHeight: '0', height: '100%' });
   });
 
   it('clears the rich editor and its Markdown state together', () => {
