@@ -49,7 +49,7 @@ function ChatDemo({ mode, latestGuidance }: { mode: 'inline' | 'panel'; latestGu
     <div className="section-chat border border-gray-200 rounded-lg p-4 bg-token-bg-primary guidance-demo-chat">
       <div className="guidance-demo-chat-inner">
         {latestGuidance && <div className="guidance-demo-notification" role="status">AI guidance will appear in 0s</div>}
-        <h2 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '1rem' }} className="text-token-text-primary">LLM Chat Interface</h2>
+        <h2 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '1rem' }} className="text-token-text-primary">AI Chatbot</h2>
         <div className="guidance-demo-messages" data-interaction-section="response">
           <div className="guidance-demo-assistant">You have several promising ideas. Which residents might still be hard to reach when the city issues a heat warning?</div>
           <div className="guidance-demo-user">I want neighbourhood partners to identify who needs help, but I am still working out how the support connects.</div>

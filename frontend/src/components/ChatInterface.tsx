@@ -1323,7 +1323,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, sessionStartTi
         </div>
       )}
       <h2 style={{ fontSize: '1.125rem', fontWeight: '600', marginBottom: '1rem' }} className="text-token-text-primary">
-        LLM Chat Interface
+        AI Chatbot
       </h2>
 
       {/* Chat Messages Area */}

@@ -66,6 +66,13 @@ describe('ChatInterface streaming', () => {
     }) as jest.Mock;
   });
 
+  it('labels the chat panel as AI Chatbot', () => {
+    render(<ChatInterface sessionId="" sessionStartTime={0} logger={logger} />);
+
+    expect(screen.getByRole('heading', { name: 'AI Chatbot' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'LLM Chat Interface' })).not.toBeInTheDocument();
+  });
+
   it('scrolls only once while one AI response streams in multiple parts', async () => {
     render(<ChatInterface sessionId="" sessionStartTime={0} logger={logger} />);
 
