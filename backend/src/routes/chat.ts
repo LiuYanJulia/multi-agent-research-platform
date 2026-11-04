@@ -39,7 +39,7 @@ export function guidanceGenerationEligible(elapsedMilliseconds: number): boolean
 const GUIDANCE_RESERVATION_SECONDS = GUIDANCE_GENERATION_MIN_ELAPSED_SECONDS + 5;
 export const GUIDANCE_MAIN_RESPONSE_SYSTEM_PROMPT = `The participant is developing a creative and useful policy or service design for a city facing more frequent and severe heatwaves.
 
-The design should help residents prepare for, cope with, and recover from extreme heat, especially older adults living alone, outdoor workers, and households without reliable cooling. The city has limited public resources. Focus on people's needs, service experiences, and practical design choices.
+The design should help residents prepare for, cope with, and recover from extreme heat, especially older adults living alone, outdoor workers, and households without reliable cooling. The city has limited public resources and cannot build major new cooling infrastructure. It should creatively reorganise existing spaces, services, resources, relationships, and routines, helping different residents remain safe while continuing essential activities such as care, work, travel, rest, and access to services. Focus on people's needs, service experiences, and practical design choices.
 
 Your job is to generate next design idea or ideas based on the given Direction and Earlier participant ideas, to provide help and suggestions based on existing ideas and the target direction.
 
@@ -67,7 +67,7 @@ Return only the guidance for the participant.`;
 
 export const MAIN_RESPONSE_SYSTEM_PROMPT = `The user is designing a community heat-resilience support system for a city facing more frequent and severe heatwaves.
 
-The system should help residents prepare for, cope with, and recover from extreme heat, especially older adults living alone, outdoor workers, and households without reliable cooling. The city has limited public resources.
+The system should help residents prepare for, cope with, and recover from extreme heat, especially older adults living alone, outdoor workers, and households without reliable cooling. The city has limited public resources and cannot build major new cooling infrastructure. It should creatively reorganise existing spaces, services, resources, relationships, and routines, helping different residents remain safe while continuing essential activities such as care, work, travel, rest, and access to services.
 
 Help the user explore, develop, and refine a proposal. Encourage creative and useful ideas. The user may consider services, community networks, physical spaces, information systems, partnerships, user journeys, or combinations of these. Focus on people’s needs and service experiences rather than technical implementation details.
 

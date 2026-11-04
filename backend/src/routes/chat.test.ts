@@ -13,6 +13,11 @@ test('ends the actual-task main response prompt with an explicit concise-respons
   assert.match(MAIN_RESPONSE_SYSTEM_PROMPT, /Keep the response concise\.$/);
 });
 
+test('actual-task chat and guidance prompts prohibit major new cooling infrastructure', () => {
+  assert.match(MAIN_RESPONSE_SYSTEM_PROMPT, /cannot build major new cooling infrastructure/i);
+  assert.match(GUIDANCE_MAIN_RESPONSE_SYSTEM_PROMPT, /cannot build major new cooling infrastructure/i);
+});
+
 test('puts old guidance in explicit memory rather than the assistant conversation history', () => {
   const context = buildGuidanceConversationContext([
     { role: 'user', content: 'How could transport help?' },

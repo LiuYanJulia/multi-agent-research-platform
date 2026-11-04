@@ -69,6 +69,9 @@ const WelcomeActual: React.FC<WelcomeActualProps> = ({ onStart, groupId }) => {
               Please develop a proposal for a community heat-resilience support system that could help residents prepare for, cope with, and recover from extreme heat. The city has limited public resources, so consider how support could reach people in practical and meaningful ways.
             </p>
             <p style={{ marginBottom: '0.75rem' }}>
+              The city cannot build major new cooling infrastructure, so your proposal should creatively reorganise existing spaces, services, resources, relationships, and routines. It should help different residents remain safe while continuing essential activities such as care, work, travel, rest, and access to services.
+            </p>
+            <p style={{ marginBottom: '0.75rem' }}>
               You may propose services, community networks, physical spaces, information systems, partnerships, or combinations of these. Your proposal will be evaluated on two criteria:
             </p>
             <ul style={{ margin: '0 0 0.75rem', paddingLeft: '1.5rem' }}>
