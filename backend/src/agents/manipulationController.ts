@@ -481,9 +481,9 @@ Example input:
 
 Example output:
 {"directionGuidance":"Develop exactly two focused refinements of the alert-and-rest-break approach. Preserve the core approach, while using one variation to change the protection trigger and the other to change the worker's feedback or escalation path; keep both changes narrow and operational."}`,
-  C_high: `Generate an instruction for a high-magnitude convergent step.
+  C_high: `Generate an instruction for a high-magnitude convergent integrated-improvement step.
 
-The instruction must require one substantial new design direction as an integrated extension of the selected ideas, not a parallel alternative. It must identify the concrete role that each contributing idea plays in the connection, then develop an additional organising mechanism, decision logic, service handoff, governance arrangement, or user journey that makes those roles work together in a new way. The new element must operate as a bridge or extension of the existing ideas, not an independent or disconnected programme. It must require an explanation of the workflow, dependency, or trade-off created by that connection.
+The instruction must require one substantial integrated improvement to how the selected ideas work together. “Substantial” describes the scope of the integration, not novelty for its own sake: retain the useful roles of the earlier ideas and improve their coordination, decision logic, responsibility allocation, or end-to-end service flow. It must identify the concrete role that each contributing idea plays, then add or revise an organising mechanism, service handoff, governance arrangement, or user journey that resolves a practical gap, friction, dependency, or trade-off in their joint operation. The improvement must extend the existing ideas, not replace them with an independent or disconnected programme.
 
 Do not request a summary, a list of existing features, or a superficial combination of ideas. Do not produce the combined design yourself.
 
@@ -493,7 +493,7 @@ Example input:
 3. Local buses can transport residents in extreme heat.
 
 Example output:
-{"directionGuidance":"Develop one integrated extension of neighbour check-ins, cooling refuges, and transport through a coordinating handoff. Make the check-in the trigger, the bus the assisted route, and the hub the destination; show how this bridge creates an assisted journey to refuge and the trade-off between rapid support and residents' independence, rather than proposing a separate service."}
+{"directionGuidance":"Develop one substantial integrated improvement to neighbour check-ins, cooling refuges, and transport: improve the handoff from identifying need to reaching refuge. Retain the check-in as the trigger, the bus as the assisted route, and the hub as the destination; add a coordinating handoff that reduces missed journeys while balancing rapid support with residents' independence."}
 
 Example input:
 1. Outdoor workers receive heat-risk alerts.
@@ -501,10 +501,10 @@ Example input:
 3. Clinics report heat-related illness trends.
 
 Example output:
-{"directionGuidance":"Develop one integrated extension of worker alerts, employer protections, and clinic signals through a shared decision mechanism. Give each idea a role—clinic signals inform the alert threshold, alerts activate employer protections—and explain the workflow and tension between individual reports and citywide evidence; do not propose a disconnected new programme."}`,
-  C_low: `Generate an instruction for a low-magnitude convergent step.
+{"directionGuidance":"Develop one substantial integrated improvement to worker alerts, employer protections, and clinic signals by refining the shared decision process. Retain clinic signals as evidence, alerts as the trigger, and employer protections as the response; improve how evidence reaches the threshold and activates protections so the system is useful without creating a separate programme."}`,
+  C_low: `Generate an instruction for a low-magnitude convergent integrated-improvement step.
 
-The instruction must require one small but substantive new connection between two selected ideas. It must add one concrete bridge element, such as a handoff, trigger, role, interaction, or moment in a user journey, and explain how that bridge operates between the two ideas. It should develop the current direction without expanding it into a new citywide system.
+The instruction must require one focused feature-level improvement at the connection between earlier ideas. It must add or refine one small feature, trigger, handoff, access step, role, or feedback loop that makes those ideas work together better. It should keep the current approach and scope intact, rather than expanding it into a new citywide system.
 
 Do not request a summary, a feature list, or a superficial merge. Do not produce the final design yourself.
 
@@ -513,14 +513,14 @@ Example input:
 2. Cooling hubs offer free daytime refuge.
 
 Example output:
-{"directionGuidance":"Develop one focused connection between buddy check-ins and cooling hubs by adding a concrete transition from a check-in to refuge access. Make clear that the check-in identifies a need and the bridge arranges hub access; keep the scope narrow and develop that interaction rather than restating either service."}
+{"directionGuidance":"Develop one focused feature-level improvement between buddy check-ins and cooling hubs: refine the transition from identifying a need to arranging refuge access. Keep the check-in and hub model intact, and add a simple handoff that reduces the chance that an identified resident misses the available support."}
 
 Example input:
 1. Outdoor workers receive heat alerts.
 2. Employers provide shaded rest breaks.
 
 Example output:
-{"directionGuidance":"Develop one small connection between the heat alert and the rest break by adding a specific trigger or worker-employer interaction that turns an alert into an actionable protection step. Make clear how the alert reaches the employer and activates the break; keep the current approach intact and do not expand into a broad labour-policy proposal."}`,
+{"directionGuidance":"Develop one focused feature-level improvement between the heat alert and the rest break: refine the trigger that turns an alert into an actionable protection step. Keep the current approach intact, and add a small worker-employer confirmation loop so that the alert reliably activates the break without expanding into a broader labour-policy proposal."}`,
 };
 
 const WRITING_SUMMARIZER_SYSTEM_PROMPT = `You summarize the participant's current design writing for a separate guidance writer.

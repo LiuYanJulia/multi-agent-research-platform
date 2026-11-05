@@ -58,8 +58,8 @@ test('final guidance input always includes direction and ideas but conditionally
   assert.match(full, /Earlier suggestions:/);
   assert.match(full, /If Existing writing is provided above/i);
   assert.match(full, /Stay within 80 English words/i);
-  assert.match(full, /For convergent guidance, the first sentence must name the earlier ideas or roles being connected and the new bridge mechanism/i);
-  assert.match(full, /briefly explain how that connection operates/i);
+  assert.match(full, /For convergent guidance, the first sentence must name the earlier ideas or roles, the connection being improved, and the added or revised mechanism/i);
+  assert.match(full, /briefly explain the practical gap or friction, how the improvement operates, and its practical benefit/i);
 
   const withoutOptionalMemory = buildFinalGuidanceInstruction({
     directionGuidance: 'Develop two nearby refinements.', previousIdeas: ['Heat alerts.'],
