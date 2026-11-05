@@ -7,6 +7,8 @@ import {
   GUIDANCE_GENERATION_MIN_ELAPSED_SECONDS,
   GUIDANCE_MAIN_RESPONSE_SYSTEM_PROMPT,
   MAIN_RESPONSE_SYSTEM_PROMPT,
+  guidanceResponseSystemPrompt,
+  mainResponseSystemMessages,
 } from './chat';
 
 test('ends the actual-task main response prompt with an explicit concise-response instruction', () => {
@@ -16,6 +18,12 @@ test('ends the actual-task main response prompt with an explicit concise-respons
 test('actual-task chat and guidance prompts prohibit major new cooling infrastructure', () => {
   assert.match(MAIN_RESPONSE_SYSTEM_PROMPT, /cannot build major new cooling infrastructure/i);
   assert.match(GUIDANCE_MAIN_RESPONSE_SYSTEM_PROMPT, /cannot build major new cooling infrastructure/i);
+});
+
+test('practice keeps its existing prompt behavior while actual guidance receives the new task constraint', () => {
+  assert.deepEqual(mainResponseSystemMessages('practice_user_1'), []);
+  assert.doesNotMatch(guidanceResponseSystemPrompt('practice_user_1'), /cannot build major new cooling infrastructure/i);
+  assert.match(guidanceResponseSystemPrompt('actual_user_1'), /cannot build major new cooling infrastructure/i);
 });
 
 test('puts old guidance in explicit memory rather than the assistant conversation history', () => {

@@ -65,6 +65,34 @@ Add a genuinely new mechanism, relationship, decision, interaction, or scenario.
 
 Return only the guidance for the participant.`;
 
+const PRACTICE_GUIDANCE_MAIN_RESPONSE_SYSTEM_PROMPT = `The participant is developing a creative and useful policy or service design for a city facing more frequent and severe heatwaves.
+
+The design should help residents prepare for, cope with, and recover from extreme heat, especially older adults living alone, outdoor workers, and households without reliable cooling. The city has limited public resources. Focus on people's needs, service experiences, and practical design choices.
+
+Your job is to generate next design idea or ideas based on the given Direction and Earlier participant ideas, to provide help and suggestions based on existing ideas and the target direction.
+
+The user message always provides:
+
+- Direction: the kind of design development to make next.
+- Earlier participant ideas: ideas selected from the participant's previous activity. Use these as the starting material for the next development.
+
+The user message may also provide either or both of the following:
+
+- Existing writing: ideas already developed in the participant's written proposal.
+- Earlier suggestions: ideas already suggested to the participant.
+
+Follow the Direction and build from the Earlier participant ideas.
+
+When Existing writing is provided, do not propose, rephrase, rename, or merely repackage any mechanism, workflow, recommendation, or named concept already present in it.
+
+When Earlier suggestions are provided, do not propose, rephrase, rename, or merely repackage any mechanism, workflow, recommendation, or named concept already present in them.
+
+When neither optional section is provided, develop the next ideas from the Direction and Earlier participant ideas without applying either of those two avoidance constraints.
+
+Add a genuinely new mechanism, relationship, decision, interaction, or scenario. Mention an existing idea only when necessary to explain how the new element connects to it.
+
+Return only the guidance for the participant.`;
+
 export const MAIN_RESPONSE_SYSTEM_PROMPT = `The user is designing a community heat-resilience support system for a city facing more frequent and severe heatwaves.
 
 The system should help residents prepare for, cope with, and recover from extreme heat, especially older adults living alone, outdoor workers, and households without reliable cooling. The city has limited public resources and cannot build major new cooling infrastructure. It should creatively reorganise existing spaces, services, resources, relationships, and routines, helping different residents remain safe while continuing essential activities such as care, work, travel, rest, and access to services.
@@ -74,10 +102,16 @@ Help the user explore, develop, and refine a proposal. Encourage creative and us
 Keep responses concise and focused. Use brief explanations and avoid unnecessarily long or exhaustive answers. Keep the response concise.`;
 
 /** Practice responses intentionally use the participant's prompt and conversation only. */
-function mainResponseSystemMessages(sessionId: string): ChatCompletionMessageParam[] {
+export function mainResponseSystemMessages(sessionId: string): ChatCompletionMessageParam[] {
   return isPracticeSession(sessionId)
     ? []
     : [{ role: 'system', content: MAIN_RESPONSE_SYSTEM_PROMPT }];
+}
+
+export function guidanceResponseSystemPrompt(sessionId: string): string {
+  return isPracticeSession(sessionId)
+    ? PRACTICE_GUIDANCE_MAIN_RESPONSE_SYSTEM_PROMPT
+    : GUIDANCE_MAIN_RESPONSE_SYSTEM_PROMPT;
 }
 
 export function buildFinalGuidanceInstruction(
@@ -122,7 +156,7 @@ async function createDirectGuidancePayload(db: any, sessionId: string, result: a
   const finalInstruction = buildFinalGuidanceInstruction(planner, guidanceMemory, wordLimit, guidanceSpec.targetOrientation);
   const context: ChatCompletionMessageParam[] = conversation.map((row): ChatCompletionMessageParam => ({ role: row.role, content: row.content }));
   const responseMessages: ChatCompletionMessageParam[] = [
-    { role: 'system', content: GUIDANCE_MAIN_RESPONSE_SYSTEM_PROMPT },
+    { role: 'system', content: guidanceResponseSystemPrompt(sessionId) },
     ...context,
     { role: 'user', content: finalInstruction },
   ];
