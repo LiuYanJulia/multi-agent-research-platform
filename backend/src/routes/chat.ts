@@ -8,7 +8,7 @@ import { generateSplitGuidancePlanner, guidanceDisplaySummary, guidanceResponseW
 const router = express.Router();
 
 /** Begin the two-stage generation slightly before the legacy two-minute reservation elapsed. */
-export const GUIDANCE_GENERATION_MIN_ELAPSED_SECONDS = 100;
+export const GUIDANCE_GENERATION_MIN_ELAPSED_SECONDS = 110;
 
 type StoredMessage = { role: 'user' | 'assistant' | 'ai_guidance'; content: string };
 

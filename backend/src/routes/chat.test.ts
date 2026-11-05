@@ -40,10 +40,10 @@ test('puts old guidance in explicit memory rather than the assistant conversatio
   assert.deepEqual(context.guidanceMemory, ['An already delivered transport voucher idea.']);
 });
 
-test('only starts guidance generation after 100 seconds since the last displayed guidance', () => {
-  assert.equal(GUIDANCE_GENERATION_MIN_ELAPSED_SECONDS, 100);
-  assert.equal(guidanceGenerationEligible(99_999), false);
-  assert.equal(guidanceGenerationEligible(100_001), true);
+test('only starts guidance generation after 110 seconds since the last displayed guidance', () => {
+  assert.equal(GUIDANCE_GENERATION_MIN_ELAPSED_SECONDS, 110);
+  assert.equal(guidanceGenerationEligible(109_999), false);
+  assert.equal(guidanceGenerationEligible(110_001), true);
 });
 
 test('final guidance input always includes direction and ideas but conditionally includes writing and earlier suggestions', () => {
