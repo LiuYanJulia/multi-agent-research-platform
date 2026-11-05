@@ -63,6 +63,18 @@ test('every direction condition has two few-shot examples and its required inter
   }
 });
 
+test('convergent direction prompts make new mechanisms traceable extensions of earlier ideas', () => {
+  const high = directionPlannerSystemPrompt({ targetOrientation: 'C', magnitude: 'high' });
+  assert.match(high, /integrated extension of the selected ideas/i);
+  assert.match(high, /concrete role/i);
+  assert.match(high, /not an independent or disconnected programme/i);
+
+  const low = directionPlannerSystemPrompt({ targetOrientation: 'C', magnitude: 'low' });
+  assert.match(low, /two selected ideas/i);
+  assert.match(low, /bridge element/i);
+  assert.match(low, /how that bridge operates/i);
+});
+
 test('runs all applicable planner components concurrently and skips the writing summarizer when writing is empty', async () => {
   const calls: string[] = [];
   const completion = async (systemPrompt: string) => {

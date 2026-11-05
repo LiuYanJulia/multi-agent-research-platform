@@ -483,7 +483,7 @@ Example output:
 {"directionGuidance":"Develop exactly two focused refinements of the alert-and-rest-break approach. Preserve the core approach, while using one variation to change the protection trigger and the other to change the worker's feedback or escalation path; keep both changes narrow and operational."}`,
   C_high: `Generate an instruction for a high-magnitude convergent step.
 
-The instruction must require one substantial new design direction that connects the compatible selected ideas. It must develop an additional organising mechanism, decision logic, service handoff, governance arrangement, or user journey that makes the ideas work together in a new way. It must also require an explanation of the important relationship or trade-off created by that connection.
+The instruction must require one substantial new design direction as an integrated extension of the selected ideas, not a parallel alternative. It must identify the concrete role that each contributing idea plays in the connection, then develop an additional organising mechanism, decision logic, service handoff, governance arrangement, or user journey that makes those roles work together in a new way. The new element must operate as a bridge or extension of the existing ideas, not an independent or disconnected programme. It must require an explanation of the workflow, dependency, or trade-off created by that connection.
 
 Do not request a summary, a list of existing features, or a superficial combination of ideas. Do not produce the combined design yourself.
 
@@ -493,7 +493,7 @@ Example input:
 3. Local buses can transport residents in extreme heat.
 
 Example output:
-{"directionGuidance":"Develop one substantial new direction that connects neighbour check-ins, cooling refuges, and transport through a coordinating handoff. Show how a check-in can become an assisted journey to refuge, and explain the trade-off between rapid support and residents' independence; do not merely combine the three existing services in a list."}
+{"directionGuidance":"Develop one integrated extension of neighbour check-ins, cooling refuges, and transport through a coordinating handoff. Make the check-in the trigger, the bus the assisted route, and the hub the destination; show how this bridge creates an assisted journey to refuge and the trade-off between rapid support and residents' independence, rather than proposing a separate service."}
 
 Example input:
 1. Outdoor workers receive heat-risk alerts.
@@ -501,10 +501,10 @@ Example input:
 3. Clinics report heat-related illness trends.
 
 Example output:
-{"directionGuidance":"Develop one integrated direction that connects worker alerts, employer protections, and clinic signals through a shared decision mechanism. Explain how the connection changes when protections activate and what tension it resolves between individual reports and citywide evidence; do not summarise the existing features."}`,
+{"directionGuidance":"Develop one integrated extension of worker alerts, employer protections, and clinic signals through a shared decision mechanism. Give each idea a role—clinic signals inform the alert threshold, alerts activate employer protections—and explain the workflow and tension between individual reports and citywide evidence; do not propose a disconnected new programme."}`,
   C_low: `Generate an instruction for a low-magnitude convergent step.
 
-The instruction must require one small but substantive new connection between compatible selected ideas. It must add one concrete element, such as a handoff, trigger, role, interaction, or moment in a user journey. It should develop the current direction without expanding it into a new citywide system.
+The instruction must require one small but substantive new connection between two selected ideas. It must add one concrete bridge element, such as a handoff, trigger, role, interaction, or moment in a user journey, and explain how that bridge operates between the two ideas. It should develop the current direction without expanding it into a new citywide system.
 
 Do not request a summary, a feature list, or a superficial merge. Do not produce the final design yourself.
 
@@ -513,14 +513,14 @@ Example input:
 2. Cooling hubs offer free daytime refuge.
 
 Example output:
-{"directionGuidance":"Develop one focused connection between buddy check-ins and cooling hubs by adding a concrete transition from a check-in to refuge access. Keep the scope narrow and develop that new interaction rather than restating either existing service."}
+{"directionGuidance":"Develop one focused connection between buddy check-ins and cooling hubs by adding a concrete transition from a check-in to refuge access. Make clear that the check-in identifies a need and the bridge arranges hub access; keep the scope narrow and develop that interaction rather than restating either service."}
 
 Example input:
 1. Outdoor workers receive heat alerts.
 2. Employers provide shaded rest breaks.
 
 Example output:
-{"directionGuidance":"Develop one small connection between the heat alert and the rest break by adding a specific trigger or worker-employer interaction that turns an alert into an actionable protection step. Keep the current approach intact and do not expand into a broad labour-policy proposal."}`,
+{"directionGuidance":"Develop one small connection between the heat alert and the rest break by adding a specific trigger or worker-employer interaction that turns an alert into an actionable protection step. Make clear how the alert reaches the employer and activates the break; keep the current approach intact and do not expand into a broad labour-policy proposal."}`,
 };
 
 const WRITING_SUMMARIZER_SYSTEM_PROMPT = `You summarize the participant's current design writing for a separate guidance writer.

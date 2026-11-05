@@ -134,7 +134,7 @@ If Earlier suggestions are provided above, avoid providing ideas that repeat, re
 
 Stay within ${wordLimit} English words.
 Start with one sentence that summarises the proposed direction.
-Then use concise Markdown points.
+${orientation === 'C' ? 'For convergent guidance, the first sentence must name the earlier ideas or roles being connected and the new bridge mechanism. Then briefly explain how that connection operates; do not merely state that the ideas are connected.\n' : ''}Then use concise Markdown points.
 ${orientation === 'D' ? 'For divergent guidance, use a numbered list that preserves the requested number of ideas.\n' : ''}Do not add a preamble or end with a question.`);
   return sections.join('\n\n');
 }
