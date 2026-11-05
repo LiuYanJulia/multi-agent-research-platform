@@ -37,6 +37,7 @@ const ResearchPagePractice: React.FC<ResearchPagePracticeProps> = ({
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [password, setPassword] = useState('');
   const [passwordError, setPasswordError] = useState('');
+  const [practiceDebugOpen, setPracticeDebugOpen] = useState(false);
   const isTwoPhasePractice = ['4', '5', 'lowtf_hightm', 'lowtf_lowtm'].includes(groupId.trim().toLowerCase());
   const [practicePhase, setPracticePhase] = useState<'exploration' | 'writing'>('exploration');
   const [showPhaseTransitionModal, setShowPhaseTransitionModal] = useState(false);
@@ -214,7 +215,17 @@ const ResearchPagePractice: React.FC<ResearchPagePracticeProps> = ({
 
   return (
     <>
-      <DebugPanel isTestUser={isTestUser} isPracticeSession={true} transcript={debugTranscript} partialTranscript={debugPartialTranscript} stages={debugStages} />
+      <DebugPanel
+        isTestUser={isTestUser || practiceDebugOpen}
+        isPracticeSession={true}
+        open={practiceDebugOpen}
+        onOpenChange={setPracticeDebugOpen}
+        showToggleButton={isTestUser}
+        panelZIndex={showCompleteModal && practiceDebugOpen ? 10000 : 1050}
+        transcript={debugTranscript}
+        partialTranscript={debugPartialTranscript}
+        stages={debugStages}
+      />
 
       {/* Timer - standard practice is 2 minutes; groups 4/5 use two 90-second phases. */}
       <Timer
@@ -433,6 +444,16 @@ const ResearchPagePractice: React.FC<ResearchPagePracticeProps> = ({
             >
               Continue to Main Task
             </button>
+            <div style={{ display: 'flex', justifyContent: 'center', marginTop: '0.75rem' }}>
+              <button
+                type="button"
+                aria-label="Open debug panel"
+                onClick={() => setPracticeDebugOpen(true)}
+                style={{ padding: '0.25rem 0.5rem', background: 'transparent', color: '#6b7280', border: '1px solid #d1d5db', borderRadius: '0.25rem', fontSize: '0.75rem', cursor: 'pointer' }}
+              >
+                🐛 Debug
+              </button>
+            </div>
           </div>
         </div>
       )}

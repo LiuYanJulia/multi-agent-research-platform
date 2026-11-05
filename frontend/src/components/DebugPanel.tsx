@@ -62,6 +62,10 @@ export interface AgentStageEvent {
 interface DebugPanelProps {
   isTestUser: boolean;
   isPracticeSession: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  showToggleButton?: boolean;
+  panelZIndex?: number;
   // Paper 2 (2026-09): one completed transcription chunk per entry, in completion order - each
   // is rendered on its own line so testers can see the actual segmentation boundaries the
   // transcription API is producing, instead of one run-on paragraph.
@@ -79,26 +83,41 @@ const AGENT_LABELS: Record<AgentStageEvent['agent'], string> = {
 
 const PANEL_WIDTH = 340;
 
-const DebugPanel: React.FC<DebugPanelProps> = ({ isTestUser, isPracticeSession, transcript, partialTranscript, stages }) => {
-  const [isOpen, setIsOpen] = useState(false);
+const DebugPanel: React.FC<DebugPanelProps> = ({
+  isTestUser,
+  isPracticeSession,
+  open,
+  onOpenChange,
+  showToggleButton = true,
+  panelZIndex = 1050,
+  transcript,
+  partialTranscript,
+  stages,
+}) => {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const [expandedEvaluationStage, setExpandedEvaluationStage] = useState<number | null>(null);
   const [expandedGuidancePlannerStage, setExpandedGuidancePlannerStage] = useState<number | null>(null);
   const [expandedGuidanceResponseStage, setExpandedGuidanceResponseStage] = useState<number | null>(null);
   const [expandedGuidanceCardStage, setExpandedGuidanceCardStage] = useState<number | null>(null);
   const latestMoveCounts = [...stages].reverse().find((stage) => stage.moveCounts)?.moveCounts;
   const latestStreak = [...stages].reverse().find((stage) => stage.streak)?.streak;
+  const isOpen = open ?? uncontrolledOpen;
+  const setIsOpen = (next: boolean) => {
+    if (open === undefined) setUncontrolledOpen(next);
+    onOpenChange?.(next);
+  };
 
   if (!isTestUser) return null;
 
   return (
     <>
-      <button
-        onClick={() => setIsOpen((o) => !o)}
+      {showToggleButton && <button
+        onClick={() => setIsOpen(!isOpen)}
         style={{
           position: 'fixed',
           top: '1rem',
           right: isOpen ? `${PANEL_WIDTH + 12}px` : '1rem',
-          zIndex: 1100,
+          zIndex: panelZIndex + 50,
           padding: '0.5rem 0.75rem',
           backgroundColor: '#1f2937',
           color: 'white',
@@ -113,7 +132,7 @@ const DebugPanel: React.FC<DebugPanelProps> = ({ isTestUser, isPracticeSession, 
         title="Test mode debug panel"
       >
         🐛 Debug{isOpen ? ' ✕' : ''}
-      </button>
+      </button>}
 
       <div
         style={{
@@ -125,15 +144,23 @@ const DebugPanel: React.FC<DebugPanelProps> = ({ isTestUser, isPracticeSession, 
           backgroundColor: '#111827',
           color: '#e5e7eb',
           boxShadow: '-4px 0 16px rgba(0,0,0,0.35)',
-          zIndex: 1050,
+          zIndex: panelZIndex,
           transition: 'right 0.2s ease',
           display: 'flex',
           flexDirection: 'column',
           fontSize: '0.75rem',
         }}
       >
-        <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid #374151', fontWeight: 700, fontSize: '0.8125rem' }}>
-          Test Mode Debug Panel
+        <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid #374151', fontWeight: 700, fontSize: '0.8125rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span>Test Mode Debug Panel</span>
+          <button
+            type="button"
+            aria-label="Close panel"
+            onClick={() => setIsOpen(false)}
+            style={{ color: '#e5e7eb', background: 'transparent', border: 'none', fontSize: '1rem', cursor: 'pointer', lineHeight: 1 }}
+          >
+            ×
+          </button>
         </div>
 
         <div style={{ padding: '0.5rem 1rem', borderBottom: '1px solid #374151', color: isPracticeSession ? '#fbbf24' : '#34d399', fontWeight: 600 }}>

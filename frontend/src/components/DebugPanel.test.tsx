@@ -3,6 +3,28 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import DebugPanel, { AgentStageEvent } from './DebugPanel';
 
 describe('DebugPanel guidance auditing', () => {
+  it('can open as a controlled panel without exposing the normal floating toggle', () => {
+    const onOpenChange = jest.fn();
+    render(
+      <DebugPanel
+        isTestUser
+        isPracticeSession
+        transcript={[]}
+        partialTranscript={null}
+        stages={[]}
+        open
+        onOpenChange={onOpenChange}
+        showToggleButton={false}
+        panelZIndex={10000}
+      />,
+    );
+
+    expect(screen.queryByTitle('Test mode debug panel')).not.toBeInTheDocument();
+    expect(screen.getByText('Test Mode Debug Panel')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close panel' }));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
   it('keeps the full guidance context available behind an expander', () => {
     const stages: AgentStageEvent[] = [{
       agent: 'main_response_agent',
