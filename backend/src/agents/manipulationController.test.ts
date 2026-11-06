@@ -11,10 +11,10 @@ import {
 import { GUIDANCE_NOTIFICATION_COOLDOWN_SECONDS } from '../services/guidanceDelivery';
 
 test('maps every orientation and magnitude to its approved guidance response word limit', () => {
-  assert.equal(guidanceResponseWordLimit('D', 'high'), 120);
-  assert.equal(guidanceResponseWordLimit('D', 'low'), 50);
-  assert.equal(guidanceResponseWordLimit('C', 'high'), 80);
-  assert.equal(guidanceResponseWordLimit('C', 'low'), 50);
+  assert.equal(guidanceResponseWordLimit('D', 'high'), 110);
+  assert.equal(guidanceResponseWordLimit('D', 'low'), 40);
+  assert.equal(guidanceResponseWordLimit('C', 'high'), 70);
+  assert.equal(guidanceResponseWordLimit('C', 'low'), 40);
 });
 
 test('labels divergent and convergent guidance summaries before their muted copy', () => {
@@ -52,8 +52,8 @@ test('every direction condition has two few-shot examples and its required inter
   const expectations = [
     [{ targetOrientation: 'D' as const, magnitude: 'high' as const }, /exactly six/i],
     [{ targetOrientation: 'D' as const, magnitude: 'low' as const }, /exactly two/i],
-    [{ targetOrientation: 'C' as const, magnitude: 'high' as const }, /substantial integrated improvement/i],
-    [{ targetOrientation: 'C' as const, magnitude: 'low' as const }, /focused feature-level improvement/i],
+    [{ targetOrientation: 'C' as const, magnitude: 'high' as const }, /broadly integrates the compatible selected earlier ideas/i],
+    [{ targetOrientation: 'C' as const, magnitude: 'low' as const }, /focused improvement that connects a small number/i],
   ] as const;
   for (const [spec, requirement] of expectations) {
     const prompt = directionPlannerSystemPrompt(spec);
@@ -65,15 +65,16 @@ test('every direction condition has two few-shot examples and its required inter
 
 test('convergent direction prompts frame guidance as useful improvements to earlier ideas', () => {
   const high = directionPlannerSystemPrompt({ targetOrientation: 'C', magnitude: 'high' });
-  assert.match(high, /substantial integrated improvement/i);
-  assert.match(high, /retain the useful roles/i);
-  assert.match(high, /practical gap, friction, dependency, or trade-off/i);
-  assert.match(high, /independent or disconnected programme/i);
+  assert.match(high, /broadly integrates the compatible selected earlier ideas/i);
+  assert.match(high, /more creative and more useful/i);
+  assert.match(high, /novelty and usefulness/i);
+  assert.match(high, /technical details/i);
 
   const low = directionPlannerSystemPrompt({ targetOrientation: 'C', magnitude: 'low' });
-  assert.match(low, /focused feature-level improvement/i);
-  assert.match(low, /connection between earlier ideas/i);
-  assert.match(low, /small feature, trigger, handoff, access step, role, or feedback loop/i);
+  assert.match(low, /focused improvement that connects a small number/i);
+  assert.match(low, /Preserve the participant's core direction/i);
+  assert.match(low, /more creative and more useful/i);
+  assert.match(low, /technical details/i);
 });
 
 test('runs all applicable planner components concurrently and skips the writing summarizer when writing is empty', async () => {

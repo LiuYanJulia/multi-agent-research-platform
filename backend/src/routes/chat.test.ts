@@ -51,19 +51,19 @@ test('final guidance input always includes direction and ideas but conditionally
     directionGuidance: 'Develop a new coordination mechanism.',
     previousIdeas: ['Cooling hubs.', 'Neighbour check-ins.'],
     writingContextSummary: 'The draft already includes transport vouchers.',
-  }, ['Earlier guidance proposed mobile cooling buses.'], 80, 'C');
+  }, ['Earlier guidance proposed mobile cooling buses.'], 70, 'C');
   assert.match(full, /^Direction:/);
   assert.match(full, /Earlier participant ideas:/);
   assert.match(full, /Existing writing:/);
   assert.match(full, /Earlier suggestions:/);
   assert.match(full, /If Existing writing is provided above/i);
-  assert.match(full, /Stay within 80 English words/i);
-  assert.match(full, /For convergent guidance, the first sentence must name the earlier ideas or roles, the connection being improved, and the added or revised mechanism/i);
-  assert.match(full, /briefly explain the practical gap or friction, how the improvement operates, and its practical benefit/i);
+  assert.match(full, /Stay within 70 English words/i);
+  assert.match(full, /For convergent guidance, briefly identify the earlier ideas being developed/i);
+  assert.match(full, /both more novel and more useful/i);
 
   const withoutOptionalMemory = buildFinalGuidanceInstruction({
     directionGuidance: 'Develop two nearby refinements.', previousIdeas: ['Heat alerts.'],
-  }, [], 50, 'D');
+  }, [], 40, 'D');
   assert.doesNotMatch(withoutOptionalMemory, /Existing writing:/);
   assert.doesNotMatch(withoutOptionalMemory, /Earlier suggestions:/);
   assert.match(withoutOptionalMemory, /For divergent guidance, use a numbered list/i);

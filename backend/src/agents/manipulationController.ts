@@ -407,8 +407,8 @@ export function guidanceDisplaySummary(spec: Pick<GuidanceSpec, 'targetOrientati
 }
 
 export function guidanceResponseWordLimit(targetOrientation: Orientation, magnitude: TmLevel): number {
-  if (targetOrientation === 'D') return magnitude === 'high' ? 120 : 50;
-  return magnitude === 'high' ? 80 : 50;
+  if (targetOrientation === 'D') return magnitude === 'high' ? 110 : 40;
+  return magnitude === 'high' ? 70 : 40;
 }
 
 function makePromptForResponse(spec: Pick<GuidanceSpec, 'targetOrientation' | 'magnitude' | 'recentWritingContext'>, directionGuidance: string, previousIdeas: string[]): string {
@@ -447,6 +447,8 @@ const DIRECTION_PROMPT_ADDITIONS: Record<GuidancePolicyKey, string> = {
 
 The instruction must require exactly six substantially different next design directions. They should challenge the current framing through different actors, settings, service models, timing, incentives, delivery channels, or roles of technology. They must be alternative paths, not six features of one proposal or six minor variants.
 
+The instruction must require every proposed idea to be both useful and creative, while remaining meaningfully connected to the participant's selected earlier ideas.
+
 Do not produce the six directions yourself.
 
 Example input:
@@ -454,17 +456,19 @@ Example input:
 2. Neighbours call older adults during heat alerts.
 
 Example output:
-{"directionGuidance":"Develop exactly six substantially different next directions that move beyond a cooling-hub and neighbour-check-in model. Make each direction change a major assumption about who provides heat support, where it happens, or how residents gain protection; do not make the six directions into small additions to the existing services."}
+{"directionGuidance":"Develop exactly six substantially different next directions that move beyond a cooling-hub and neighbour-check-in model. Make each direction change a major assumption about who provides heat support, where it happens, or how residents gain protection; do not make the six directions into small additions to the existing services. Make each proposed idea both useful and creative."}
 
 Example input:
 1. Outdoor workers receive heat alerts.
 2. Employers provide shaded rest areas.
 
 Example output:
-{"directionGuidance":"Develop exactly six broad alternative directions that move beyond an employer-alert-and-rest-break approach. Vary the level at which protection is organised, such as worker agency, public infrastructure, labour rules, community support, daily routines, or financial protection; keep the six directions genuinely different from one another."}`,
+{"directionGuidance":"Develop exactly six broad alternative directions that move beyond an employer-alert-and-rest-break approach. Vary the level at which protection is organised, such as worker agency, public infrastructure, labour rules, community support, daily routines, or financial protection; keep the six directions genuinely different from one another. Make each proposed idea both useful and creative."}`,
   D_low: `Generate an instruction for a low-magnitude divergent step.
 
 The instruction must require exactly two nearby but distinct next variations. Both must preserve the participant's core direction. Each variation should change one small, concrete design dimension, such as a trigger, handoff, user role, access route, timing, or feedback loop. Each must add a substantive next idea rather than merely rephrase an existing feature.
+
+The instruction must require every proposed idea to be both useful and creative, while remaining meaningfully connected to the participant's selected earlier ideas.
 
 Do not produce the two variations yourself.
 
@@ -473,19 +477,27 @@ Example input:
 2. Cooling hubs offer free daytime refuge.
 
 Example output:
-{"directionGuidance":"Develop exactly two nearby variations of the heat-buddy and cooling-hub approach. Keep the same core support model, but make one variation change how a check-in triggers a hub visit and make the other change how an isolated resident gains access; each variation should add a concrete new interaction."}
+{"directionGuidance":"Develop exactly two nearby variations of the heat-buddy and cooling-hub approach. Keep the same core support model, but make one variation change how a check-in triggers a hub visit and make the other change how an isolated resident gains access; each variation should add a concrete new interaction. Make each proposed idea both useful and creative."}
 
 Example input:
 1. Outdoor workers receive heat alerts.
 2. Employers provide shaded rest breaks.
 
 Example output:
-{"directionGuidance":"Develop exactly two focused refinements of the alert-and-rest-break approach. Preserve the core approach, while using one variation to change the protection trigger and the other to change the worker's feedback or escalation path; keep both changes narrow and operational."}`,
-  C_high: `Generate an instruction for a high-magnitude convergent integrated-improvement step.
+{"directionGuidance":"Develop exactly two focused refinements of the alert-and-rest-break approach. Preserve the core approach, while using one variation to change the protection trigger and the other to change the worker's feedback or escalation path; keep both changes narrow and operational. Make each proposed idea both useful and creative."}`,
+  C_high: `Generate an instruction for a high-magnitude convergent improvement step.
 
-The instruction must require one substantial integrated improvement to how the selected ideas work together. “Substantial” describes the scope of the integration, not novelty for its own sake: retain the useful roles of the earlier ideas and improve their coordination, decision logic, responsibility allocation, or end-to-end service flow. It must identify the concrete role that each contributing idea plays, then add or revise an organising mechanism, service handoff, governance arrangement, or user journey that resolves a practical gap, friction, dependency, or trade-off in their joint operation. The improvement must extend the existing ideas, not replace them with an independent or disconnected programme.
+The instruction must require one coherent improvement that broadly integrates the compatible selected earlier ideas. Identify meaningful connections across those ideas and develop their combined potential.
 
-Do not request a summary, a list of existing features, or a superficial combination of ideas. Do not produce the combined design yourself.
+The instruction must ask the generator to evaluate the earlier ideas for opportunities to improve them, then combine compatible ideas into the proposed improvement.
+
+Extend the earlier ideas to improve their novelty and usefulness. The improvement should make the combined direction more creative and more useful than the earlier ideas alone. Use the selected ideas to decide what kind of improvement would provide meaningful help.
+
+A supporting function or a revised relationship between ideas may be useful when it strengthens the combined concept. Do not equate improvement with adding detail, and do not default to detailed scenarios, operational steps, feature specifications, interaction walkthroughs, or technical details.
+
+Keep the proposed improvement strongly grounded in the selected earlier ideas. Require the generator to briefly identify which ideas it builds on and how their integration improves the design.
+
+Do not request a summary, a list of existing features, or a superficial combination. Do not produce the improved design yourself.
 
 Example input:
 1. Neighbours check on older residents during heat alerts.
@@ -493,7 +505,7 @@ Example input:
 3. Local buses can transport residents in extreme heat.
 
 Example output:
-{"directionGuidance":"Develop one substantial integrated improvement to neighbour check-ins, cooling refuges, and transport: improve the handoff from identifying need to reaching refuge. Retain the check-in as the trigger, the bus as the assisted route, and the hub as the destination; add a coordinating handoff that reduces missed journeys while balancing rapid support with residents' independence."}
+{"directionGuidance":"Develop one coherent improvement that integrates neighbour check-ins, cooling refuges, and transport. Explore how their complementary strengths could create a more creative and useful approach to supporting older residents than the three services offer separately. Briefly identify what each idea contributes and explain the added value of the integration. Help improve the earlier ideas rather than merely expanding implementation or procedure details."}
 
 Example input:
 1. Outdoor workers receive heat-risk alerts.
@@ -501,26 +513,34 @@ Example input:
 3. Clinics report heat-related illness trends.
 
 Example output:
-{"directionGuidance":"Develop one substantial integrated improvement to worker alerts, employer protections, and clinic signals by refining the shared decision process. Retain clinic signals as evidence, alerts as the trigger, and employer protections as the response; improve how evidence reaches the threshold and activates protections so the system is useful without creating a separate programme."}`,
-  C_low: `Generate an instruction for a low-magnitude convergent integrated-improvement step.
+{"directionGuidance":"Improve the combined potential of worker alerts, employer rest provisions, and clinic evidence as one coherent design direction. Find a meaningful way for these ideas to strengthen one another so the result is both more creative and more useful for protecting workers. Briefly name the ideas being connected and explain the improvement they enable together. Help improve the earlier ideas rather than merely expanding implementation or procedure details."}`,
+  C_low: `Generate an instruction for a low-magnitude convergent improvement step.
 
-The instruction must require one focused feature-level improvement at the connection between earlier ideas. It must add or refine one small feature, trigger, handoff, access step, role, or feedback loop that makes those ideas work together better. It should keep the current approach and scope intact, rather than expanding it into a new citywide system.
+The instruction must require one focused improvement that connects a small number of compatible selected earlier ideas. Preserve the participant's core direction and keep the scope of integration narrow.
 
-Do not request a summary, a feature list, or a superficial merge. Do not produce the final design yourself.
+The instruction must ask the generator to evaluate the earlier ideas for opportunities to improve them, then combine compatible ideas into the proposed improvement.
+
+Extend the earlier ideas to improve their novelty and usefulness. The improvement should make the focused direction more creative and more useful than the earlier ideas alone. Use the selected ideas to decide what kind of improvement would provide meaningful help.
+
+A supporting function or a revised relationship between ideas may be useful when it strengthens the focused concept. Do not equate a narrow scope with a greater level of detail. Do not default to detailed scenarios, operational steps, feature specifications, interaction walkthroughs, or technical details.
+
+Keep the proposed improvement strongly grounded in the selected earlier ideas. Require the generator to briefly identify which ideas it builds on and how their connection improves the design.
+
+Do not request a summary, a feature list, or a superficial merge. Do not produce the improved design yourself.
 
 Example input:
 1. Heat buddies check on isolated seniors.
 2. Cooling hubs offer free daytime refuge.
 
 Example output:
-{"directionGuidance":"Develop one focused feature-level improvement between buddy check-ins and cooling hubs: refine the transition from identifying a need to arranging refuge access. Keep the check-in and hub model intact, and add a simple handoff that reduces the chance that an identified resident misses the available support."}
+{"directionGuidance":"Develop one focused improvement connecting buddy check-ins and cooling hubs. Preserve the existing support approach while finding a more creative and useful way for the two ideas to strengthen support for isolated seniors. Briefly identify both earlier ideas and explain what their connection improves. Help improve the earlier ideas rather than merely expanding implementation or procedure details."}
 
 Example input:
 1. Outdoor workers receive heat alerts.
 2. Employers provide shaded rest breaks.
 
 Example output:
-{"directionGuidance":"Develop one focused feature-level improvement between the heat alert and the rest break: refine the trigger that turns an alert into an actionable protection step. Keep the current approach intact, and add a small worker-employer confirmation loop so that the alert reliably activates the break without expanding into a broader labour-policy proposal."}`,
+{"directionGuidance":"Develop one focused improvement connecting heat alerts and shaded rest breaks. Keep the current worker-protection approach while finding a more creative and useful relationship between recognising heat risk and providing opportunities to recover. Briefly explain which earlier ideas the improvement builds on and why it makes them better together. Help improve the earlier ideas rather than merely expanding implementation or procedure details."}`,
 };
 
 const WRITING_SUMMARIZER_SYSTEM_PROMPT = `You summarize the participant's current design writing for a separate guidance writer.
@@ -606,15 +626,15 @@ export function buildGuidancePlannerRuntimeInput(
 
 function plannerDirectionFallback(spec: Pick<GuidanceSpec, 'targetOrientation' | 'magnitude'>): string {
   if (spec.targetOrientation === 'D' && spec.magnitude === 'high') {
-    return 'Explore six clearly distinct design directions that rethink key aspects of the current design.';
+    return 'Explore exactly six clearly distinct design directions that rethink key aspects of the current design. Make each idea useful and creative, building on the earlier ideas.';
   }
   if (spec.targetOrientation === 'D') {
-    return 'Provide exactly two nearby variations that preserve the core direction while each changing a different small design dimension not covered by recent guidance.';
+    return 'Provide exactly two nearby variations that preserve the core direction while each changing a different small design dimension not covered by recent guidance. Make each idea useful and creative, building on the earlier ideas.';
   }
   if (spec.magnitude === 'high') {
-    return 'Integrate the compatible ideas into one coherent design, explaining key connections and trade-offs.';
+    return 'Broadly integrate compatible earlier ideas into one coherent improvement that is more novel and more useful. Briefly identify the ideas it builds on and their added value together. Do not merely expand implementation or procedure details.';
   }
-  return 'Make one focused connection between compatible ideas through a concrete scenario, feature, interaction, or design decision while preserving the core direction.';
+  return 'Make one focused improvement connecting a small number of compatible earlier ideas while preserving the core direction. Make the result more novel and more useful, briefly identifying the earlier ideas and the added value. Do not merely expand implementation or procedure details.';
 }
 
 function plannerSystemPrompt(spec: Pick<GuidanceSpec, 'targetOrientation' | 'magnitude'>): string {

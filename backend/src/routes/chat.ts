@@ -61,7 +61,7 @@ When Earlier suggestions are provided, do not propose, rephrase, rename, or mere
 
 When neither optional section is provided, develop the next ideas from the Direction and Earlier participant ideas without applying either of those two avoidance constraints.
 
-Add a genuinely new mechanism, relationship, decision, interaction, or scenario. Mention an existing idea only when necessary to explain how the new element connects to it.
+Develop creative and useful next ideas at the scope specified by the Direction. Mention an existing idea when needed to explain how the proposed development builds on it.
 
 Return only the guidance for the participant.`;
 
@@ -89,7 +89,7 @@ When Earlier suggestions are provided, do not propose, rephrase, rename, or mere
 
 When neither optional section is provided, develop the next ideas from the Direction and Earlier participant ideas without applying either of those two avoidance constraints.
 
-Add a genuinely new mechanism, relationship, decision, interaction, or scenario. Mention an existing idea only when necessary to explain how the new element connects to it.
+Develop creative and useful next ideas at the scope specified by the Direction. Mention an existing idea when needed to explain how the proposed development builds on it.
 
 Return only the guidance for the participant.`;
 
@@ -134,8 +134,8 @@ If Earlier suggestions are provided above, avoid providing ideas that repeat, re
 
 Stay within ${wordLimit} English words.
 Start with one sentence that summarises the proposed direction.
-${orientation === 'C' ? 'For convergent guidance, the first sentence must name the earlier ideas or roles, the connection being improved, and the added or revised mechanism. Then briefly explain the practical gap or friction, how the improvement operates, and its practical benefit; do not merely state that the ideas are connected.\n' : ''}Then use concise Markdown points.
-${orientation === 'D' ? 'For divergent guidance, use a numbered list that preserves the requested number of ideas.\n' : ''}Do not add a preamble or end with a question.`);
+${orientation === 'C' ? 'For convergent guidance, briefly identify the earlier ideas being developed and present an improvement that makes the resulting direction both more novel and more useful. Explain the added value of connecting or extending those ideas. Keep the response focused on the design concept and its value; do not default to detailed scenarios, operational steps, feature specifications, interaction walkthroughs, or technical details. Help improve the earlier ideas rather than merely expanding implementation or procedure details.\n' : ''}Then use concise Markdown points.
+${orientation === 'D' ? 'For divergent guidance, use a numbered list that preserves the requested number of ideas. Make each proposed idea both useful and creative.\n' : ''}Do not add a preamble or end with a question.`);
   return sections.join('\n\n');
 }
 
